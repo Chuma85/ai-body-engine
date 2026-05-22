@@ -75,6 +75,39 @@ The API will be available at:
 python -m pytest
 ```
 
+## Phase 2A — Synthetic Dataset Prototype
+
+Phase 2A adds a placeholder Python-only silhouette generator. It proves the dataset pipeline before Blender, SMPL, or SMPL-X are introduced.
+
+The generator creates:
+
+- Front silhouette PNG images
+- Side silhouette PNG images
+- `labels.csv` with synthetic measurement labels
+- A validation report that checks required columns, image paths, measurements, and row count
+
+These are simple 2D placeholder silhouettes for pipeline validation. They are not production-quality body modeling, not AI measurements, and not anatomically precise scan outputs.
+
+Generate a sample dataset:
+
+```bash
+python -m synthetic.generator.generate_dataset --count 100 --output-dir data/synthetic/phase_2a
+```
+
+Validate the generated dataset:
+
+```bash
+python -m synthetic.generator.validate_dataset data/synthetic/phase_2a/labels/labels.csv
+```
+
+Run tests:
+
+```bash
+python -m pytest
+```
+
+Generated PNG and CSV files are ignored by git so large datasets are not committed by accident. The folder structure is tracked with `.gitkeep` files.
+
 ## Future Phases
 
 - Phase 2 synthetic dataset generator

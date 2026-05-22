@@ -8,7 +8,13 @@ pytest-cache-files-*/
 .mypy_cache/
 .ruff_cache/
 /models/
-/data/
+/data/*
+!/data/synthetic/
+!/data/synthetic/phase_2a/
+!/data/synthetic/phase_2a/images/
+!/data/synthetic/phase_2a/images/front/
+!/data/synthetic/phase_2a/images/side/
+!/data/synthetic/phase_2a/labels/
 /checkpoints/
 /logs/
 *.pt
@@ -18,3 +24,9 @@ synthetic/renders/*
 !synthetic/renders/.gitkeep
 synthetic/labels/*
 !synthetic/labels/.gitkeep
+data/synthetic/phase_2a/images/front/*
+data/synthetic/phase_2a/images/side/*
+data/synthetic/phase_2a/labels/*.csv
+!data/synthetic/phase_2a/images/front/.gitkeep
+!data/synthetic/phase_2a/images/side/.gitkeep
+!data/synthetic/phase_2a/labels/.gitkeep
