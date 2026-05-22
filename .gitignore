@@ -7,10 +7,10 @@ __pycache__/
 pytest-cache-files-*/
 .mypy_cache/
 .ruff_cache/
-models/
-data/
-checkpoints/
-logs/
+/models/
+/data/
+/checkpoints/
+/logs/
 *.pt
 *.pth
 *.onnx
