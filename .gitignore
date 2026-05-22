@@ -30,3 +30,7 @@ data/synthetic/phase_2a/labels/*.csv
 !data/synthetic/phase_2a/images/front/.gitkeep
 !data/synthetic/phase_2a/images/side/.gitkeep
 !data/synthetic/phase_2a/labels/.gitkeep
+data/synthetic/phase_2b/
+*.blend
+*.blend1
+*.exr

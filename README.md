@@ -108,6 +108,33 @@ python -m pytest
 
 Generated PNG and CSV files are ignored by git so large datasets are not committed by accident. The folder structure is tracked with `.gitkeep` files.
 
+## Phase 2B — Blender Synthetic Pipeline Scaffold
+
+Phase 2A proved the Python-only silhouette generation workflow. Phase 2B prepares the project for a future Blender/3D synthetic rendering pipeline.
+
+This phase adds:
+
+- A Blender render configuration example
+- Config validation utilities
+- Measurement label schema utilities
+- Blender command generation
+- A dry-run CLI
+- A Blender-compatible script scaffold that can still be imported in normal Python
+
+Normal tests do not require Blender. This phase does not create realistic humans yet; it prepares the path for Phase 2C.
+
+Dry-run the Blender pipeline command:
+
+```bash
+python -m synthetic.blender.run_blender_pipeline --config synthetic/blender/configs/phase_2b_render_config.example.json --dry-run
+```
+
+Run tests:
+
+```bash
+python -m pytest
+```
+
 ## Future Phases
 
 - Phase 2 synthetic dataset generator

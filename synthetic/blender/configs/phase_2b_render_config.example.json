@@ -1,0 +1,33 @@
+{
+  "generator_version": "phase_2b_blender_scaffold_v1",
+  "output_dir": "data/synthetic/phase_2b",
+  "sample_count": 10,
+  "image_width": 768,
+  "image_height": 1024,
+  "camera_distance": 3.5,
+  "camera_focal_length": 70,
+  "render_engine": "BLENDER_EEVEE_NEXT",
+  "random_seed": 42,
+  "views": ["front", "side"],
+  "body_parameter_ranges": {
+    "height_cm": [150, 205],
+    "weight_kg": [45, 130],
+    "chest_cm": [75, 130],
+    "waist_cm": [55, 125],
+    "hip_cm": [75, 135],
+    "shoulder_cm": [35, 60],
+    "inseam_cm": [65, 95],
+    "sleeve_cm": [50, 75],
+    "neck_cm": [30, 50],
+    "thigh_cm": [40, 80],
+    "calf_cm": [28, 55]
+  },
+  "lighting": {
+    "type": "three_point",
+    "randomize_strength": true
+  },
+  "background": {
+    "type": "plain",
+    "color": [1, 1, 1]
+  }
+}
