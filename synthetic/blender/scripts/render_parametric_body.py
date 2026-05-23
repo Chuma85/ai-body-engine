@@ -26,6 +26,7 @@ from synthetic.blender.utils.deformation_math import compute_shape_key_targets
 GENERATOR_VERSION = "phase_2c_blender_procedural_body_v1"
 BODY_SHAPES = ("slim", "average", "athletic", "curvy", "broad", "plus")
 CANONICAL_FRONT_AXIS = "-Y"
+CANONICAL_SIDE_VIEW_AXIS = "-X"
 HORIZONTAL_AXIS_ANGLES = {
     "+X": 0.0,
     "+Y": math.pi / 2,
@@ -661,7 +662,8 @@ def import_mesh_asset(bpy, asset_path: Path, asset_format: str) -> list:
 
 def normalize_imported_body_orientation(bpy, imported_objects: list, base_mesh: dict) -> None:
     source_front_axis = base_mesh.get("source_front_axis", CANONICAL_FRONT_AXIS)
-    rotation_z = horizontal_axis_rotation(source_front_axis, CANONICAL_FRONT_AXIS)
+    source_yaw_degrees = base_mesh.get("source_yaw_degrees", 0.0)
+    rotation_z = horizontal_axis_rotation(source_front_axis, CANONICAL_FRONT_AXIS) + math.radians(source_yaw_degrees)
     if abs(rotation_z) < 0.0001:
         return
 
@@ -881,7 +883,7 @@ def camera_transform_for_view(
     if view == "front":
         return (center_x, center_y - distance, center_z), (math.pi / 2, 0, 0)
     if view == "side":
-        return (center_x + distance, center_y, center_z), (math.pi / 2, 0, math.pi / 2)
+        return (center_x - distance, center_y, center_z), (math.pi / 2, 0, -math.pi / 2)
     raise ValueError(f"Unsupported view: {view}")
 
 

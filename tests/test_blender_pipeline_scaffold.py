@@ -305,6 +305,7 @@ def test_phase_2g_rigged_mesh_config_loads_and_validates() -> None:
     assert config.base_mesh is not None
     assert config.base_mesh["asset_path"] == "assets/body_meshes/base_human_rigged.fbx"
     assert config.base_mesh["source_front_axis"] == "+X"
+    assert config.base_mesh["source_yaw_degrees"] == 30.0
     assert config.base_mesh["fallback_to_static_mesh"] is True
     assert config.rigging is not None
     assert config.rigging["detect_armature"] is True
@@ -374,8 +375,17 @@ def test_phase_2i_fbx_front_axis_rotates_to_canonical_front() -> None:
     module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
 
     assert module.CANONICAL_FRONT_AXIS == "-Y"
+    assert module.CANONICAL_SIDE_VIEW_AXIS == "-X"
     assert math.isclose(module.horizontal_axis_rotation("+X", module.CANONICAL_FRONT_AXIS), -math.pi / 2)
     assert math.isclose(module.horizontal_axis_rotation("-Y", module.CANONICAL_FRONT_AXIS), 0.0)
+
+
+def test_phase_2j_source_yaw_calibrates_rigged_mesh_profile() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+
+    rotation = module.horizontal_axis_rotation("+X", module.CANONICAL_FRONT_AXIS) + math.radians(30.0)
+
+    assert math.isclose(rotation, math.radians(-60.0))
 
 
 def test_phase_2i_camera_transforms_use_true_front_and_side_views() -> None:
@@ -386,8 +396,8 @@ def test_phase_2i_camera_transforms_use_true_front_and_side_views() -> None:
 
     assert front_location == (0.0, -4.0, 1.5)
     assert front_rotation == (math.pi / 2, 0, 0)
-    assert side_location == (4.0, 0.0, 1.5)
-    assert side_rotation == (math.pi / 2, 0, math.pi / 2)
+    assert side_location == (-4.0, 0.0, 1.5)
+    assert side_rotation == (math.pi / 2, 0, -math.pi / 2)
 
 
 def test_phase_2i_orthographic_scale_keeps_full_body_visible_in_portrait_frame() -> None:

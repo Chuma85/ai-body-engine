@@ -13,7 +13,7 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 FRONT_SUFFIX = "_front.png"
 SIDE_SUFFIX = "_side.png"
 ORIENTATION_WARNING = (
-    "TODO Phase 2J: front/side camera orientation is configured by the renderer "
+    "TODO future phase: front/side camera orientation is configured by the renderer "
     "but not automatically validated yet; inspect rendered views visually."
 )
 
