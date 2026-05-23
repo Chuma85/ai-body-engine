@@ -36,6 +36,7 @@ class RenderConfig:
     body_parameter_ranges: dict[str, list[float]]
     lighting: dict[str, Any]
     background: dict[str, Any]
+    materials: dict[str, Any] | None = None
 
 
 def load_render_config(path: str) -> RenderConfig:

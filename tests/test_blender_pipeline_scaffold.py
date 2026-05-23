@@ -1,4 +1,5 @@
 from dataclasses import replace
+import csv
 import importlib
 
 import pytest
@@ -6,8 +7,11 @@ import pytest
 from synthetic.blender.utils.blender_command import build_blender_command, format_command
 from synthetic.blender.utils.measurement_schema import REQUIRED_MEASUREMENT_COLUMNS, validate_measurement_row
 from synthetic.blender.utils.render_config import load_render_config, validate_render_config
+from synthetic.generator.generate_dataset import LABEL_COLUMNS
+from synthetic.generator.validate_dataset import validate_dataset
 
 CONFIG_PATH = "synthetic/blender/configs/phase_2b_render_config.example.json"
+PHASE_2C_CONFIG_PATH = "synthetic/blender/configs/phase_2c_render_config.example.json"
 
 
 def test_example_render_config_loads_and_validates() -> None:
@@ -56,5 +60,76 @@ def test_build_blender_command_and_formatting() -> None:
 def test_render_parametric_body_imports_without_bpy() -> None:
     module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
 
-    assert hasattr(module, "create_parametric_body_placeholder")
+    assert hasattr(module, "create_procedural_body")
+    assert hasattr(module, "generate_body_parameters")
     assert hasattr(module, "main")
+
+
+def test_phase_2c_render_config_loads_and_validates() -> None:
+    config = load_render_config(PHASE_2C_CONFIG_PATH)
+
+    assert config.generator_version == "phase_2c_blender_procedural_body_v1"
+    assert config.output_dir == "data/synthetic/phase_2c"
+    assert config.materials is not None
+    assert len(config.materials["skin_tones"]) == 4
+
+
+def test_phase_2c_blender_command_can_be_built() -> None:
+    command = build_blender_command(
+        blender_executable="blender",
+        script_path="synthetic/blender/scripts/render_parametric_body.py",
+        config_path=PHASE_2C_CONFIG_PATH,
+        dry_run=True,
+    )
+
+    assert command[-1] == PHASE_2C_CONFIG_PATH
+    assert "render_parametric_body.py" in format_command(command)
+
+
+def test_measurement_schema_matches_dataset_label_columns() -> None:
+    assert REQUIRED_MEASUREMENT_COLUMNS == LABEL_COLUMNS
+
+
+def test_validate_mock_phase_2c_dataset(tmp_path) -> None:
+    output_dir = tmp_path / "phase_2c"
+    front_dir = output_dir / "images" / "front"
+    side_dir = output_dir / "images" / "side"
+    labels_dir = output_dir / "labels"
+    front_dir.mkdir(parents=True)
+    side_dir.mkdir(parents=True)
+    labels_dir.mkdir(parents=True)
+
+    front_path = front_dir / "sample_000001_front.png"
+    side_path = side_dir / "sample_000001_side.png"
+    front_path.write_bytes(b"mock-front")
+    side_path.write_bytes(b"mock-side")
+
+    labels_csv = labels_dir / "labels.csv"
+    row = {
+        "sample_id": "sample_000001",
+        "front_image_path": front_path.as_posix(),
+        "side_image_path": side_path.as_posix(),
+        "height_cm": "180",
+        "weight_kg": "75",
+        "chest_cm": "98",
+        "waist_cm": "82",
+        "hip_cm": "100",
+        "shoulder_cm": "45",
+        "inseam_cm": "82",
+        "sleeve_cm": "62",
+        "neck_cm": "39",
+        "thigh_cm": "56",
+        "calf_cm": "38",
+        "body_shape": "average",
+        "generator_version": "phase_2c_blender_procedural_body_v1",
+    }
+
+    with labels_csv.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=LABEL_COLUMNS)
+        writer.writeheader()
+        writer.writerow(row)
+
+    result = validate_dataset(str(labels_csv))
+
+    assert result["valid"] is True
+    assert result["row_count"] == 1

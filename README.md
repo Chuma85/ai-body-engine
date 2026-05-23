@@ -135,6 +135,43 @@ Run tests:
 python -m pytest
 ```
 
+## Phase 2C — Procedural Blender Body Rendering MVP
+
+Phase 2C adds the first actual Blender rendering MVP. It creates simple 3D mannequin-like procedural bodies using Blender primitives, then renders front and side PNGs with matching `labels.csv`.
+
+This phase:
+
+- Uses procedural geometry, not SMPL/SMPL-X
+- Generates simple mannequin bodies, not production-quality anatomical humans
+- Does not train models
+- Does not dress garments
+- Does not integrate with FashionApp
+- Prepares for better anatomy, garment placeholders, and future high-quality try-on rendering
+
+Dry run:
+
+```bash
+python -m synthetic.blender.run_blender_pipeline --config synthetic/blender/configs/phase_2c_render_config.example.json --dry-run
+```
+
+Actual Blender run:
+
+```bash
+blender --background --python synthetic/blender/scripts/render_parametric_body.py -- --config synthetic/blender/configs/phase_2c_render_config.example.json
+```
+
+Validate generated labels:
+
+```bash
+python -m synthetic.generator.validate_dataset data/synthetic/phase_2c/labels/labels.csv
+```
+
+Run tests:
+
+```bash
+python -m pytest
+```
+
 ## Future Phases
 
 - Phase 2 synthetic dataset generator
