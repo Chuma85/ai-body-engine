@@ -132,4 +132,42 @@ Validate:
 python -m synthetic.generator.validate_dataset data/synthetic/phase_2e/labels/labels.csv
 ```
 
-If no mesh is available at `assets/body_meshes/base_human.glb`, the example config uses `procedural_fallback` mode. Real mesh deformation comes later.
+If no mesh is available at `assets/body_meshes/base_human.obj`, the example config uses `procedural_fallback` mode. Real mesh deformation comes later.
+
+## Phase 2F Mesh Variation and Auto-Framing
+
+Phase 2F adds the first approximate deformation pass for imported base meshes.
+
+The renderer now can:
+
+- Compute measurement-driven region scale factors
+- Scale approximate vertical mesh regions for shoulders, chest, waist, hips, legs, and arms
+- Preserve target height after deformation
+- Center the mesh on the origin after deformation
+- Auto-frame front and side cameras around the full body
+
+This is intentionally approximate. It does not require bones, rigging, SMPL/SMPL-X, or garment dressing. The goal is body diversity and better full-body framing, not final scan-grade realism.
+
+Dry run:
+
+```bash
+python -m synthetic.blender.run_blender_pipeline --config synthetic/blender/configs/phase_2f_mesh_variation_config.example.json --dry-run
+```
+
+Actual run:
+
+```bash
+blender --background --python synthetic/blender/scripts/render_parametric_body.py -- --config synthetic/blender/configs/phase_2f_mesh_variation_config.example.json
+```
+
+Validate:
+
+```bash
+python -m synthetic.generator.validate_dataset data/synthetic/phase_2f/labels/labels.csv
+```
+
+Open render:
+
+```bash
+code data/synthetic/phase_2f/images/front/sample_000001_front.png
+```

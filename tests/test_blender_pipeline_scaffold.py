@@ -18,6 +18,7 @@ CONFIG_PATH = "synthetic/blender/configs/phase_2b_render_config.example.json"
 PHASE_2C_CONFIG_PATH = "synthetic/blender/configs/phase_2c_render_config.example.json"
 PHASE_2D_CONFIG_PATH = "synthetic/blender/configs/phase_2d_render_config.example.json"
 PHASE_2E_CONFIG_PATH = "synthetic/blender/configs/phase_2e_base_mesh_config.example.json"
+PHASE_2F_CONFIG_PATH = "synthetic/blender/configs/phase_2f_mesh_variation_config.example.json"
 
 
 def test_example_render_config_loads_and_validates() -> None:
@@ -217,6 +218,73 @@ def test_missing_base_mesh_fallback_metadata_without_blender_calls() -> None:
     module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
 
     assert module.load_base_mesh_if_available(object(), str(module.repo_root() / "assets" / "body_meshes" / "missing.glb"), "glb") is None
+
+
+def test_phase_2f_mesh_variation_config_loads_and_validates() -> None:
+    config = load_render_config(PHASE_2F_CONFIG_PATH)
+
+    assert config.generator_version == "phase_2f_mesh_variation_v1"
+    assert config.output_dir == "data/synthetic/phase_2f"
+    assert config.mesh_deformation is not None
+    assert config.mesh_deformation["enabled"] is True
+    assert config.mesh_deformation["mode"] == "region_scale_v1"
+    assert config.camera is not None
+    assert config.camera["auto_frame_body"] is True
+
+
+def test_phase_2f_blender_command_can_be_built() -> None:
+    command = build_blender_command(
+        blender_executable="blender",
+        script_path="synthetic/blender/scripts/render_parametric_body.py",
+        config_path=PHASE_2F_CONFIG_PATH,
+        dry_run=True,
+    )
+
+    assert command[-1] == PHASE_2F_CONFIG_PATH
+    assert format_command(command).endswith("--config synthetic/blender/configs/phase_2f_mesh_variation_config.example.json")
+
+
+def test_region_scale_factors_are_clamped() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    factors = module.compute_region_scale_factors(
+        {
+            "deformation_strength": 2.0,
+            "shoulder_cm": 120,
+            "chest_cm": 230,
+            "waist_cm": 20,
+            "hip_cm": 240,
+            "thigh_cm": 5,
+            "calf_cm": 120,
+            "sleeve_cm": 10,
+            "inseam_cm": 160,
+        }
+    )
+
+    assert factors["shoulders"] == 1.35
+    assert factors["waist"] == 0.75
+    assert factors["arms"] == 0.75
+    assert all(0.75 <= value <= 1.35 for value in factors.values())
+
+
+def test_region_scale_factors_respond_to_measurements() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    factors = module.compute_region_scale_factors(
+        {
+            "deformation_strength": 0.35,
+            "shoulder_cm": 52,
+            "chest_cm": 112,
+            "waist_cm": 74,
+            "hip_cm": 108,
+            "thigh_cm": 62,
+            "calf_cm": 34,
+            "sleeve_cm": 66,
+            "inseam_cm": 86,
+        }
+    )
+
+    assert factors["shoulders"] > 1.0
+    assert factors["chest"] > 1.0
+    assert factors["waist"] < 1.0
 
 
 def test_measurement_schema_matches_dataset_label_columns() -> None:

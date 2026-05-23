@@ -243,7 +243,46 @@ Validate generated labels:
 python -m synthetic.generator.validate_dataset data/synthetic/phase_2e/labels/labels.csv
 ```
 
-If `assets/body_meshes/base_human.glb` is not present, the Phase 2E example config falls back to the procedural body renderer.
+If `assets/body_meshes/base_human.obj` is not present, the Phase 2E example config falls back to the procedural body renderer.
+
+## Phase 2F — Mesh Variation and Auto-Framing
+
+Phase 2F adds first-pass mesh deformation and full-body camera framing for imported base human meshes.
+
+This phase:
+
+- Applies approximate vertex-region scaling to imported meshes
+- Uses generated measurements to vary shoulders, chest, waist, hips, legs, and arms
+- Keeps deformation subtle and measurement-friendly
+- Preserves mesh height when configured
+- Auto-frames front and side cameras around the body bounds
+- Does not require rigging, bones, SMPL/SMPL-X, garment dressing, model training, or FashionApp integration
+
+Dry run:
+
+```bash
+python -m synthetic.blender.run_blender_pipeline --config synthetic/blender/configs/phase_2f_mesh_variation_config.example.json --dry-run
+```
+
+Actual Blender render:
+
+```bash
+blender --background --python synthetic/blender/scripts/render_parametric_body.py -- --config synthetic/blender/configs/phase_2f_mesh_variation_config.example.json
+```
+
+Validate generated labels:
+
+```bash
+python -m synthetic.generator.validate_dataset data/synthetic/phase_2f/labels/labels.csv
+```
+
+Open a render:
+
+```bash
+code data/synthetic/phase_2f/images/front/sample_000001_front.png
+```
+
+Future phases can improve deformation with rigged meshes, blend shapes, or parametric human models.
 
 ## Future Phases
 

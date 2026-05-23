@@ -29,6 +29,11 @@ OPTIONAL_METADATA_COLUMNS = [
     "base_mesh_asset",
     "mesh_deformation_enabled",
     "fallback_used",
+    "deformation_mode",
+    "deformation_strength",
+    "preserve_height",
+    "auto_frame_body",
+    "camera_margin",
 ]
 
 

@@ -30,6 +30,11 @@ OPTIONAL_METADATA_COLUMNS = [
     "base_mesh_asset",
     "mesh_deformation_enabled",
     "fallback_used",
+    "deformation_mode",
+    "deformation_strength",
+    "preserve_height",
+    "auto_frame_body",
+    "camera_margin",
 ]
 LABEL_COLUMNS = [
     "sample_id",
@@ -83,10 +88,28 @@ def main() -> None:
         front_path = output_dirs["front"] / f"{params['sample_id']}_front.png"
         side_path = output_dirs["side"] / f"{params['sample_id']}_side.png"
 
-        setup_camera(bpy, "front", config["camera_distance"], config["camera_focal_length"])
+        front_camera = setup_camera(bpy, "front", config["camera_distance"], config["camera_focal_length"])
+        if render_metadata.get("objects") and (config.get("camera") or {}).get("auto_frame_body", False):
+            auto_frame_camera_to_objects(
+                bpy,
+                front_camera,
+                render_metadata["objects"],
+                "front",
+                (config.get("camera") or {}).get("margin", 0.15),
+                config["camera_focal_length"],
+            )
         render_view(bpy, front_path, config["image_width"], config["image_height"])
 
-        setup_camera(bpy, "side", config["camera_distance"], config["camera_focal_length"])
+        side_camera = setup_camera(bpy, "side", config["camera_distance"], config["camera_focal_length"])
+        if render_metadata.get("objects") and (config.get("camera") or {}).get("auto_frame_body", False):
+            auto_frame_camera_to_objects(
+                bpy,
+                side_camera,
+                render_metadata["objects"],
+                "side",
+                (config.get("camera") or {}).get("margin", 0.15),
+                config["camera_focal_length"],
+            )
         render_view(bpy, side_path, config["image_width"], config["image_height"])
 
         rows.append(
@@ -118,6 +141,11 @@ def main() -> None:
                 "base_mesh_asset": render_metadata["base_mesh_asset"],
                 "mesh_deformation_enabled": render_metadata["mesh_deformation_enabled"],
                 "fallback_used": render_metadata["fallback_used"],
+                "deformation_mode": render_metadata["deformation_mode"],
+                "deformation_strength": render_metadata["deformation_strength"],
+                "preserve_height": render_metadata["preserve_height"],
+                "auto_frame_body": render_metadata["auto_frame_body"],
+                "camera_margin": render_metadata["camera_margin"],
             }
         )
 
@@ -261,6 +289,12 @@ def create_body_from_config(bpy, params: dict, config: dict, material) -> dict[s
         "base_mesh_asset": "",
         "mesh_deformation_enabled": bool(mesh_deformation.get("enabled", False)),
         "fallback_used": False,
+        "deformation_mode": mesh_deformation.get("mode", ""),
+        "deformation_strength": mesh_deformation.get("strength", ""),
+        "preserve_height": bool(mesh_deformation.get("preserve_height", False)),
+        "auto_frame_body": bool((config.get("camera") or {}).get("auto_frame_body", False)),
+        "camera_margin": (config.get("camera") or {}).get("margin", ""),
+        "objects": [],
     }
 
     if base_mesh.get("enabled", False):
@@ -270,12 +304,20 @@ def create_body_from_config(bpy, params: dict, config: dict, material) -> dict[s
 
         if imported_objects:
             if base_mesh.get("normalize_scale", True):
-                normalize_imported_mesh(bpy, imported_objects, _body_dimensions(params)["height"])
+                normalize_objects_height(bpy, imported_objects, _body_dimensions(params)["height"])
             if base_mesh.get("center_on_origin", True):
                 center_objects_on_origin(bpy, imported_objects)
+            if mesh_deformation.get("enabled", False):
+                deformation_result = apply_region_scale_deformation(bpy, imported_objects, params, config)
+                if mesh_deformation.get("preserve_height", False):
+                    normalize_objects_height(bpy, imported_objects, _body_dimensions(params)["height"])
+                if (config.get("camera") or {}).get("center_on_body", True):
+                    center_objects_on_origin(bpy, imported_objects)
+                metadata.update(deformation_result)
             apply_material_to_objects(bpy, imported_objects, material)
             metadata["renderer_mode"] = "base_mesh"
             metadata["fallback_used"] = False
+            metadata["objects"] = imported_objects
             return metadata
 
         if not base_mesh.get("fallback_to_procedural", True):
@@ -286,6 +328,85 @@ def create_body_from_config(bpy, params: dict, config: dict, material) -> dict[s
 
     create_procedural_body(bpy, params, material, config)
     return metadata
+
+
+def compute_region_scale_factors(params: dict) -> dict[str, float]:
+    strength = params.get("deformation_strength", 0.35)
+    references = {
+        "shoulders": ("shoulder_cm", 45),
+        "chest": ("chest_cm", 100),
+        "waist": ("waist_cm", 82),
+        "hips": ("hip_cm", 98),
+        "legs": ("thigh_cm", 55),
+        "calves": ("calf_cm", 38),
+        "arms": ("sleeve_cm", 62),
+        "inseam": ("inseam_cm", 80),
+    }
+    return {
+        region: _clamp(1.0 + ((params.get(key, reference) - reference) / reference) * strength, 0.75, 1.35)
+        for region, (key, reference) in references.items()
+    }
+
+
+def apply_region_scale_deformation(bpy, objects: list, params: dict, config: dict) -> dict[str, object]:
+    mesh_deformation = config.get("mesh_deformation") or {}
+    deformation_params = dict(params)
+    deformation_params["deformation_strength"] = mesh_deformation.get("strength", 0.35)
+    scale_factors = compute_region_scale_factors(deformation_params)
+    regions = mesh_deformation.get("regions", {})
+    bounds = get_object_bounds_world(objects)
+    min_x, max_x, min_y, max_y, min_z, max_z = bounds
+    height = max(max_z - min_z, 0.0001)
+    center_x = (min_x + max_x) / 2
+    center_y = (min_y + max_y) / 2
+
+    for obj in objects:
+        if getattr(obj, "type", "") != "MESH":
+            continue
+        inverse_world = obj.matrix_world.inverted()
+        for vertex in obj.data.vertices:
+            world_vertex = obj.matrix_world @ vertex.co
+            z_ratio = (world_vertex.z - min_z) / height
+            x_scale, y_scale, z_scale = _region_scales_for_vertex(z_ratio, world_vertex, center_x, center_y, scale_factors, regions)
+            world_vertex.x = center_x + (world_vertex.x - center_x) * x_scale
+            world_vertex.y = center_y + (world_vertex.y - center_y) * y_scale
+            world_vertex.z = min_z + (world_vertex.z - min_z) * z_scale
+            vertex.co = inverse_world @ world_vertex
+        obj.data.update()
+
+    bpy.context.view_layer.update()
+    return {
+        "deformation_mode": mesh_deformation.get("mode", "region_scale_v1"),
+        "deformation_strength": mesh_deformation.get("strength", 0.35),
+        "preserve_height": bool(mesh_deformation.get("preserve_height", True)),
+    }
+
+
+def _region_scales_for_vertex(z_ratio: float, world_vertex, center_x: float, center_y: float, scale_factors: dict[str, float], regions: dict) -> tuple[float, float, float]:
+    x_scale = y_scale = z_scale = 1.0
+    side_distance = abs(world_vertex.x - center_x)
+    front_distance = abs(world_vertex.y - center_y)
+
+    if 0.70 <= z_ratio <= 0.86 and regions.get("shoulders", True):
+        x_scale = max(x_scale, scale_factors["shoulders"])
+    if 0.56 <= z_ratio < 0.74 and regions.get("chest", True):
+        x_scale = max(x_scale, scale_factors["chest"])
+        y_scale = max(y_scale, scale_factors["chest"])
+    if 0.42 <= z_ratio < 0.58 and regions.get("waist", True):
+        x_scale *= scale_factors["waist"]
+        y_scale *= scale_factors["waist"]
+    if 0.32 <= z_ratio < 0.46 and regions.get("hips", True):
+        x_scale = max(x_scale, scale_factors["hips"])
+        y_scale = max(y_scale, scale_factors["hips"])
+    if z_ratio < 0.42 and regions.get("legs", True):
+        x_scale *= scale_factors["legs"] if z_ratio > 0.20 else scale_factors["calves"]
+        y_scale *= scale_factors["legs"] if z_ratio > 0.20 else scale_factors["calves"]
+        z_scale = max(z_scale, scale_factors["inseam"])
+    if 0.32 <= z_ratio <= 0.76 and regions.get("arms", True) and side_distance > front_distance * 1.4:
+        x_scale *= scale_factors["arms"]
+        y_scale *= scale_factors["arms"]
+
+    return (_clamp(x_scale, 0.75, 1.35), _clamp(y_scale, 0.75, 1.35), _clamp(z_scale, 0.88, 1.12))
 
 
 def load_base_mesh_if_available(bpy, asset_path: str, asset_format: str) -> list | None:
@@ -320,6 +441,36 @@ def import_mesh_asset(bpy, asset_path: Path, asset_format: str) -> list:
 
 
 def normalize_imported_mesh(bpy, imported_objects: list, target_height_units: float) -> None:
+    normalize_objects_height(bpy, imported_objects, target_height_units)
+
+
+def normalize_objects_height(bpy, objects: list, target_height_units: float) -> None:
+    min_x, max_x, min_y, max_y, min_z, max_z = get_object_bounds_world(objects)
+    height = max_z - min_z
+    if height <= 0:
+        return
+
+    scale_factor = target_height_units / height
+    for obj in objects:
+        obj.scale = (obj.scale[0] * scale_factor, obj.scale[1] * scale_factor, obj.scale[2] * scale_factor)
+    bpy.context.view_layer.update()
+
+
+def get_object_bounds_world(objects: list) -> tuple[float, float, float, float, float, float]:
+    bounds = _object_bounds(objects)
+    return (bounds["min_x"], bounds["max_x"], bounds["min_y"], bounds["max_y"], bounds["min_z"], bounds["max_z"])
+
+
+def get_combined_mesh_vertices(objects: list) -> list:
+    vertices = []
+    for obj in objects:
+        if getattr(obj, "type", "") != "MESH":
+            continue
+        vertices.extend([obj.matrix_world @ vertex.co for vertex in obj.data.vertices])
+    return vertices
+
+
+def _legacy_normalize_imported_mesh(bpy, imported_objects: list, target_height_units: float) -> None:
     bounds = _object_bounds(imported_objects)
     height = bounds["max_z"] - bounds["min_z"]
     if height <= 0:
@@ -440,7 +591,7 @@ def create_procedural_body(bpy, params: dict, material, config: dict | None = No
         create_ellipsoid(bpy, f"{side}_foot", (leg_x + side * 0.04, -0.09, 0.03), (dims["calf_radius"] * 1.35, dims["calf_radius"] * 2.1, 0.05), material)
 
 
-def setup_camera(bpy, view: str, camera_distance: float, focal_length: float) -> None:
+def setup_camera(bpy, view: str, camera_distance: float, focal_length: float):
     if view == "front":
         location = (0, -camera_distance, 1.45)
         rotation = (1.5708, 0, 0)
@@ -454,6 +605,30 @@ def setup_camera(bpy, view: str, camera_distance: float, focal_length: float) ->
     camera = bpy.context.object
     camera.data.lens = focal_length
     bpy.context.scene.camera = camera
+    return camera
+
+
+def auto_frame_camera_to_objects(bpy, camera, objects: list, view: str, margin: float, focal_length: float) -> None:
+    min_x, max_x, min_y, max_y, min_z, max_z = get_object_bounds_world(objects)
+    center_x = (min_x + max_x) / 2
+    center_y = (min_y + max_y) / 2
+    center_z = (min_z + max_z) / 2
+    height = max(max_z - min_z, 0.1)
+    width = max(max_x - min_x, max_y - min_y, 0.1)
+    distance = max(height * (1.45 + margin), width * (2.0 + margin), 2.5)
+
+    if view == "front":
+        camera.location = (center_x, center_y - distance, center_z)
+        camera.rotation_euler = (1.5708, 0, 0)
+    elif view == "side":
+        camera.location = (center_x + distance, center_y, center_z)
+        camera.rotation_euler = (1.5708, 0, 1.5708)
+    else:
+        raise ValueError(f"Unsupported view: {view}")
+
+    camera.data.lens = focal_length
+    bpy.context.scene.camera = camera
+    bpy.context.view_layer.update()
 
 
 def setup_lighting(bpy, config: dict, rng: random.Random) -> None:
@@ -549,6 +724,10 @@ def _scale(value: float, source_min: float, source_max: float, target_min: float
     ratio = (value - source_min) / (source_max - source_min)
     ratio = max(0.0, min(1.0, ratio))
     return target_min + ratio * (target_max - target_min)
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
 
 
 def _degrees_to_radians(degrees: float) -> float:
