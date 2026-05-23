@@ -172,6 +172,45 @@ Run tests:
 python -m pytest
 ```
 
+## Phase 2D — Anatomical Procedural Body Refinement
+
+Phase 2D improves procedural body realism while still avoiding SMPL/SMPL-X, model training, FashionApp integration, garment dressing, and paid try-on rendering.
+
+This phase improves:
+
+- Torso tapering across chest, waist, abdomen, and hips
+- Body-shape profiles for slim, average, athletic, curvy, broad, and plus bodies
+- Limb tapering based on sleeve, inseam, thigh, and calf measurements
+- Small measurement-friendly pose variation
+- Render-quality controls
+- Additional metadata columns for generated labels
+
+Dry run:
+
+```bash
+python -m synthetic.blender.run_blender_pipeline --config synthetic/blender/configs/phase_2d_render_config.example.json --dry-run
+```
+
+Actual Blender render:
+
+```bash
+blender --background --python synthetic/blender/scripts/render_parametric_body.py -- --config synthetic/blender/configs/phase_2d_render_config.example.json
+```
+
+Validate generated labels:
+
+```bash
+python -m synthetic.generator.validate_dataset data/synthetic/phase_2d/labels/labels.csv
+```
+
+Run tests:
+
+```bash
+python -m pytest
+```
+
+Phase 2D prepares the project for Phase 2E clothing placeholders and the Phase 3 training pipeline.
+
 ## Future Phases
 
 - Phase 2 synthetic dataset generator

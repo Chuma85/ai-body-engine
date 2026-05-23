@@ -18,6 +18,15 @@ import sys
 
 GENERATOR_VERSION = "phase_2c_blender_procedural_body_v1"
 BODY_SHAPES = ("slim", "average", "athletic", "curvy", "broad", "plus")
+OPTIONAL_METADATA_COLUMNS = [
+    "skin_tone_id",
+    "pose_variation_degrees",
+    "camera_distance",
+    "camera_focal_length",
+    "render_width",
+    "render_height",
+    "anatomy_version",
+]
 LABEL_COLUMNS = [
     "sample_id",
     "front_image_path",
@@ -35,6 +44,7 @@ LABEL_COLUMNS = [
     "calf_cm",
     "body_shape",
     "generator_version",
+    *OPTIONAL_METADATA_COLUMNS,
 ]
 
 
@@ -57,10 +67,13 @@ def main() -> None:
 
     for index in range(1, config["sample_count"] + 1):
         params = generate_body_parameters(index, rng, config)
+        if config.get("anatomy", {}).get("enable_body_shape_adjustments", False):
+            params = apply_body_shape_adjustments(params)
         clear_scene(bpy)
         setup_world_background(bpy, config)
+        setup_render_quality(bpy, config)
         material = create_material(bpy, f"{params['sample_id']}_skin", params["skin_tone"])
-        create_procedural_body(bpy, params, material)
+        create_procedural_body(bpy, params, material, config)
         setup_lighting(bpy, config, rng)
 
         front_path = output_dirs["front"] / f"{params['sample_id']}_front.png"
@@ -90,6 +103,13 @@ def main() -> None:
                 "calf_cm": params["calf_cm"],
                 "body_shape": params["body_shape"],
                 "generator_version": config["generator_version"],
+                "skin_tone_id": params["skin_tone_id"],
+                "pose_variation_degrees": params["pose_variation_degrees"],
+                "camera_distance": config["camera_distance"],
+                "camera_focal_length": config["camera_focal_length"],
+                "render_width": config["image_width"],
+                "render_height": config["image_height"],
+                "anatomy_version": config.get("generator_version", GENERATOR_VERSION),
             }
         )
 
@@ -139,12 +159,20 @@ def ensure_output_dirs(output_dir: str | Path) -> dict[str, Path]:
 
 def generate_body_parameters(index: int, rng: random.Random, config: dict) -> dict:
     ranges = config["body_parameter_ranges"]
+    anatomy = config.get("anatomy", {})
     body_shape = rng.choice(BODY_SHAPES)
     skin_tones = config.get("materials", {}).get("skin_tones") or [[0.75, 0.55, 0.42, 1.0]]
+    skin_tone_id = rng.randrange(len(skin_tones))
+    pose_limit = anatomy.get("pose_variation_degrees", 0) if anatomy.get("enable_pose_variation", False) else 0
     params = {
         "sample_id": f"sample_{index:06d}",
         "body_shape": body_shape,
-        "skin_tone": rng.choice(skin_tones),
+        "skin_tone": skin_tones[skin_tone_id],
+        "skin_tone_id": skin_tone_id,
+        "pose_variation_degrees": round(rng.uniform(-pose_limit, pose_limit), 2),
+        "shoulder_rotation_degrees": round(rng.uniform(-pose_limit, pose_limit), 2),
+        "arm_angle_degrees": round(rng.uniform(-pose_limit, pose_limit), 2),
+        "leg_stance_degrees": round(rng.uniform(0, pose_limit), 2),
         "generator_version": config.get("generator_version", GENERATOR_VERSION),
     }
 
@@ -152,6 +180,21 @@ def generate_body_parameters(index: int, rng: random.Random, config: dict) -> di
         params[key] = round(rng.uniform(bounds[0], bounds[1]), 1)
 
     return params
+
+
+def apply_body_shape_adjustments(params: dict) -> dict:
+    adjustments = {
+        "slim": {"shoulder_scale": 0.94, "chest_scale": 0.92, "waist_scale": 0.88, "hip_scale": 0.92, "limb_scale": 0.88, "depth_scale": 0.90},
+        "average": {"shoulder_scale": 1.0, "chest_scale": 1.0, "waist_scale": 1.0, "hip_scale": 1.0, "limb_scale": 1.0, "depth_scale": 1.0},
+        "athletic": {"shoulder_scale": 1.12, "chest_scale": 1.08, "waist_scale": 0.94, "hip_scale": 1.0, "limb_scale": 1.06, "depth_scale": 1.04},
+        "curvy": {"shoulder_scale": 1.0, "chest_scale": 1.06, "waist_scale": 0.95, "hip_scale": 1.14, "limb_scale": 1.03, "depth_scale": 1.08},
+        "broad": {"shoulder_scale": 1.16, "chest_scale": 1.11, "waist_scale": 1.06, "hip_scale": 1.03, "limb_scale": 1.08, "depth_scale": 1.08},
+        "plus": {"shoulder_scale": 1.08, "chest_scale": 1.18, "waist_scale": 1.22, "hip_scale": 1.20, "limb_scale": 1.14, "depth_scale": 1.20},
+    }
+    shape_adjustment = adjustments.get(params.get("body_shape"), adjustments["average"])
+    adjusted = dict(params)
+    adjusted.update(shape_adjustment)
+    return adjusted
 
 
 def clear_scene(bpy) -> None:
@@ -187,43 +230,75 @@ def create_cylinder_limb(
     material,
     rotation: tuple[float, float, float] = (0, 0, 0),
 ):
-    bpy.ops.mesh.primitive_cylinder_add(vertices=32, radius=radius, depth=depth, location=location, rotation=rotation)
+    bpy.ops.mesh.primitive_cylinder_add(vertices=40, radius=radius, depth=depth, location=location, rotation=rotation)
     obj = bpy.context.object
     obj.name = name
     obj.data.materials.append(material)
     return obj
 
 
-def create_procedural_body(bpy, params: dict, material) -> None:
+def create_procedural_body(bpy, params: dict, material, config: dict | None = None) -> None:
+    config = config or {}
+    anatomy = config.get("anatomy", {})
     dims = _body_dimensions(params)
     head_z = dims["height"] - dims["head_radius"]
+    neck_z = dims["height"] * 0.84
     shoulder_z = dims["height"] * 0.77
-    chest_z = dims["height"] * 0.63
+    upper_chest_z = dims["height"] * 0.68
+    chest_z = dims["height"] * 0.61
     waist_z = dims["height"] * 0.50
-    hip_z = dims["height"] * 0.42
-    thigh_z = dims["height"] * 0.26
-    calf_z = dims["height"] * 0.10
+    abdomen_z = dims["height"] * 0.45
+    hip_z = dims["height"] * 0.39
+    knee_z = dims["height"] * 0.21
+    ankle_z = dims["height"] * 0.04
+    pose_radians = _degrees_to_radians(params.get("pose_variation_degrees", 0))
+    shoulder_tilt = _degrees_to_radians(params.get("shoulder_rotation_degrees", 0))
+    arm_angle = _degrees_to_radians(params.get("arm_angle_degrees", 0))
+    leg_stance = _degrees_to_radians(params.get("leg_stance_degrees", 0))
 
-    create_ellipsoid(bpy, "head", (0, 0, head_z), (dims["head_radius"] * 0.82, dims["head_radius"] * 0.72, dims["head_radius"]), material)
-    create_cylinder_limb(bpy, "neck", (0, 0, shoulder_z + 0.13), dims["neck_radius"], 0.25, material)
-    create_ellipsoid(bpy, "chest", (0, 0, chest_z), (dims["chest_width"], dims["depth"], 0.34), material)
-    create_ellipsoid(bpy, "waist", (0, 0, waist_z), (dims["waist_width"], dims["depth"] * 0.82, 0.24), material)
-    create_ellipsoid(bpy, "hips", (0, 0, hip_z), (dims["hip_width"], dims["depth"] * 1.05, 0.24), material)
+    create_ellipsoid(bpy, "head", (0, 0, head_z), (dims["head_radius"] * 0.82, dims["head_radius"] * 0.72, dims["head_radius"] * 1.04), material)
+    create_cylinder_limb(bpy, "neck", (0, 0, neck_z), dims["neck_radius"], dims["neck_length"], material)
+    create_ellipsoid(bpy, "shoulder_cap", (0, 0, shoulder_z), (dims["shoulder_width"], dims["depth"] * 0.82, 0.11), material)
+    create_ellipsoid(bpy, "upper_chest", (0, 0, upper_chest_z), (dims["chest_width"] * 1.02, dims["depth"] * 0.96, 0.20), material)
+    create_ellipsoid(bpy, "chest", (0, 0, chest_z), (dims["chest_width"], dims["depth"], 0.30), material)
+    create_ellipsoid(bpy, "waist", (0, 0, waist_z), (dims["waist_width"], dims["depth"] * 0.78, 0.22), material)
+    if anatomy.get("enable_torso_taper", True):
+        create_ellipsoid(bpy, "abdomen_blend", (0, 0, abdomen_z), ((dims["waist_width"] + dims["hip_width"]) * 0.48, dims["depth"] * 0.88, 0.18), material)
+    create_ellipsoid(bpy, "hips", (0, 0, hip_z), (dims["hip_width"], dims["depth"] * 1.07, 0.25), material)
 
-    arm_rotation = (0.18, 0.18, 0)
     for side in (-1, 1):
-        shoulder_x = side * (dims["shoulder_width"] + dims["arm_radius"] * 0.35)
-        elbow_z = dims["height"] * 0.52
-        wrist_z = dims["height"] * 0.34
-        create_cylinder_limb(bpy, f"{side}_upper_arm", (shoulder_x, 0, (shoulder_z + elbow_z) / 2), dims["arm_radius"], shoulder_z - elbow_z, material, rotation=arm_rotation)
-        create_cylinder_limb(bpy, f"{side}_forearm", (shoulder_x + side * 0.04, 0, (elbow_z + wrist_z) / 2), dims["arm_radius"] * 0.82, elbow_z - wrist_z, material, rotation=arm_rotation)
-        create_ellipsoid(bpy, f"{side}_hand", (shoulder_x + side * 0.07, 0, wrist_z - 0.04), (dims["arm_radius"] * 0.9, dims["arm_radius"] * 0.7, dims["arm_radius"] * 1.15), material)
+        shoulder_x = side * (dims["shoulder_width"] + dims["arm_radius"] * 0.55)
+        elbow_z = shoulder_z - dims["upper_arm_length"]
+        wrist_z = elbow_z - dims["forearm_length"]
+        upper_arm_radius = dims["arm_radius"]
+        forearm_radius = dims["arm_radius"] * (0.78 if anatomy.get("enable_limb_taper", True) else 0.9)
+        arm_x_offset = side * (0.05 + abs(arm_angle) * 0.16)
+        arm_y_offset = pose_radians * 0.10
+        create_cylinder_limb(
+            bpy,
+            f"{side}_upper_arm",
+            (shoulder_x + arm_x_offset * 0.4, arm_y_offset, (shoulder_z + elbow_z) / 2),
+            upper_arm_radius,
+            dims["upper_arm_length"],
+            material,
+            rotation=(0.15 + arm_angle, side * 0.12 + shoulder_tilt, 0),
+        )
+        create_cylinder_limb(
+            bpy,
+            f"{side}_forearm",
+            (shoulder_x + arm_x_offset, arm_y_offset * 1.2, (elbow_z + wrist_z) / 2),
+            forearm_radius,
+            dims["forearm_length"],
+            material,
+            rotation=(0.12 + arm_angle * 0.8, side * 0.09 + shoulder_tilt, 0),
+        )
+        create_ellipsoid(bpy, f"{side}_hand", (shoulder_x + side * 0.09 + arm_x_offset, 0, wrist_z - 0.04), (forearm_radius * 0.9, forearm_radius * 0.65, forearm_radius * 1.22), material)
 
     for side in (-1, 1):
-        leg_x = side * dims["leg_offset"]
-        create_cylinder_limb(bpy, f"{side}_thigh", (leg_x, 0, thigh_z), dims["thigh_radius"], dims["upper_leg_depth"], material)
-        create_cylinder_limb(bpy, f"{side}_calf", (leg_x, 0, calf_z), dims["calf_radius"], dims["lower_leg_depth"], material)
-        create_ellipsoid(bpy, f"{side}_foot", (leg_x + side * 0.03, -0.08, 0.03), (dims["calf_radius"] * 1.3, dims["calf_radius"] * 2.0, 0.05), material)
+        leg_x = side * (dims["leg_offset"] + leg_stance * 0.12)
+        create_cylinder_limb(bpy, f"{side}_thigh", (leg_x, 0, (hip_z + knee_z) / 2), dims["thigh_radius"], hip_z - knee_z, material, rotation=(side * leg_stance, 0, 0))
+        create_cylinder_limb(bpy, f"{side}_calf", (leg_x + side * leg_stance * 0.04, 0, (knee_z + ankle_z) / 2), dims["calf_radius"], knee_z - ankle_z, material, rotation=(side * leg_stance * 0.55, 0, 0))
+        create_ellipsoid(bpy, f"{side}_foot", (leg_x + side * 0.04, -0.09, 0.03), (dims["calf_radius"] * 1.35, dims["calf_radius"] * 2.1, 0.05), material)
 
 
 def setup_camera(bpy, view: str, camera_distance: float, focal_length: float) -> None:
@@ -268,6 +343,19 @@ def setup_world_background(bpy, config: dict) -> None:
         bpy.context.scene.render.engine = "BLENDER_EEVEE"
 
 
+def setup_render_quality(bpy, config: dict) -> None:
+    quality = config.get("render_quality", {})
+    bpy.context.scene.render.resolution_percentage = quality.get("resolution_percentage", 100)
+
+    if hasattr(bpy.context.scene, "eevee"):
+        if "ambient_occlusion" in quality and hasattr(bpy.context.scene.eevee, "use_gtao"):
+            bpy.context.scene.eevee.use_gtao = bool(quality["ambient_occlusion"])
+        if "contact_shadows" in quality:
+            for light in bpy.data.lights:
+                if hasattr(light, "use_shadow"):
+                    light.use_shadow = bool(quality["contact_shadows"])
+
+
 def render_view(bpy, output_path: Path, width: int, height: int) -> None:
     bpy.context.scene.render.resolution_x = width
     bpy.context.scene.render.resolution_y = height
@@ -286,25 +374,30 @@ def write_labels_csv(rows: list[dict], labels_csv_path: Path) -> None:
 
 def _body_dimensions(params: dict) -> dict[str, float]:
     height = _scale(params["height_cm"], 150, 205, 2.65, 3.25)
-    shoulder_width = _scale(params["shoulder_cm"], 35, 60, 0.34, 0.56)
-    chest_width = _scale(params["chest_cm"], 75, 130, 0.30, 0.53)
-    waist_width = _scale(params["waist_cm"], 55, 125, 0.22, 0.48)
-    hip_width = _scale(params["hip_cm"], 75, 135, 0.32, 0.56)
-    depth = _scale((params["chest_cm"] + params["waist_cm"] + params["hip_cm"]) / 3, 68, 130, 0.16, 0.33)
+    shoulder_width = _scale(params["shoulder_cm"], 35, 60, 0.34, 0.56) * params.get("shoulder_scale", 1.0)
+    chest_width = _scale(params["chest_cm"], 75, 130, 0.30, 0.53) * params.get("chest_scale", 1.0)
+    waist_width = _scale(params["waist_cm"], 55, 125, 0.22, 0.48) * params.get("waist_scale", 1.0)
+    hip_width = _scale(params["hip_cm"], 75, 135, 0.32, 0.56) * params.get("hip_scale", 1.0)
+    depth = _scale((params["chest_cm"] + params["waist_cm"] + params["hip_cm"]) / 3, 68, 130, 0.16, 0.33) * params.get("depth_scale", 1.0)
     inseam = _scale(params["inseam_cm"], 65, 95, 1.20, 1.62)
-    thigh_radius = _scale(params["thigh_cm"], 40, 80, 0.075, 0.15)
-    calf_radius = _scale(params["calf_cm"], 28, 55, 0.055, 0.11)
+    sleeve = _scale(params["sleeve_cm"], 50, 75, 0.82, 1.12)
+    limb_scale = params.get("limb_scale", 1.0)
+    thigh_radius = _scale(params["thigh_cm"], 40, 80, 0.075, 0.15) * limb_scale
+    calf_radius = _scale(params["calf_cm"], 28, 55, 0.055, 0.11) * limb_scale
 
     return {
         "height": height,
         "head_radius": height * 0.055,
         "neck_radius": _scale(params["neck_cm"], 30, 50, 0.045, 0.078),
+        "neck_length": height * 0.07,
         "shoulder_width": shoulder_width,
         "chest_width": chest_width,
         "waist_width": waist_width,
         "hip_width": hip_width,
         "depth": depth,
-        "arm_radius": _scale(params["sleeve_cm"], 50, 75, 0.052, 0.078),
+        "arm_radius": _scale(params["sleeve_cm"], 50, 75, 0.052, 0.078) * limb_scale,
+        "upper_arm_length": sleeve * 0.48,
+        "forearm_length": sleeve * 0.43,
         "thigh_radius": thigh_radius,
         "calf_radius": calf_radius,
         "leg_offset": max(0.09, hip_width * 0.38),
@@ -317,6 +410,10 @@ def _scale(value: float, source_min: float, source_max: float, target_min: float
     ratio = (value - source_min) / (source_max - source_min)
     ratio = max(0.0, min(1.0, ratio))
     return target_min + ratio * (target_max - target_min)
+
+
+def _degrees_to_radians(degrees: float) -> float:
+    return degrees * 0.017453292519943295
 
 
 def parse_args() -> argparse.Namespace:

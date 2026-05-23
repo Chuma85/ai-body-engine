@@ -1,0 +1,53 @@
+{
+  "generator_version": "phase_2d_anatomical_procedural_body_v1",
+  "output_dir": "data/synthetic/phase_2d",
+  "sample_count": 10,
+  "image_width": 768,
+  "image_height": 1024,
+  "camera_distance": 4.0,
+  "camera_focal_length": 70,
+  "render_engine": "BLENDER_EEVEE_NEXT",
+  "random_seed": 42,
+  "views": ["front", "side"],
+  "body_parameter_ranges": {
+    "height_cm": [150, 205],
+    "weight_kg": [45, 130],
+    "chest_cm": [75, 130],
+    "waist_cm": [55, 125],
+    "hip_cm": [75, 135],
+    "shoulder_cm": [35, 60],
+    "inseam_cm": [65, 95],
+    "sleeve_cm": [50, 75],
+    "neck_cm": [30, 50],
+    "thigh_cm": [40, 80],
+    "calf_cm": [28, 55]
+  },
+  "lighting": {
+    "type": "three_point",
+    "randomize_strength": true
+  },
+  "background": {
+    "type": "plain",
+    "color": [1, 1, 1]
+  },
+  "materials": {
+    "skin_tones": [
+      [0.75, 0.55, 0.42, 1.0],
+      [0.55, 0.36, 0.25, 1.0],
+      [0.90, 0.72, 0.58, 1.0],
+      [0.36, 0.22, 0.16, 1.0]
+    ]
+  },
+  "anatomy": {
+    "enable_torso_taper": true,
+    "enable_limb_taper": true,
+    "enable_body_shape_adjustments": true,
+    "enable_pose_variation": true,
+    "pose_variation_degrees": 4
+  },
+  "render_quality": {
+    "resolution_percentage": 70,
+    "ambient_occlusion": true,
+    "contact_shadows": true
+  }
+}

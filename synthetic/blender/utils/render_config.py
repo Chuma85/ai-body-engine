@@ -37,6 +37,8 @@ class RenderConfig:
     lighting: dict[str, Any]
     background: dict[str, Any]
     materials: dict[str, Any] | None = None
+    anatomy: dict[str, Any] | None = None
+    render_quality: dict[str, Any] | None = None
 
 
 def load_render_config(path: str) -> RenderConfig:

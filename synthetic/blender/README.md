@@ -62,3 +62,34 @@ python -m synthetic.generator.validate_dataset data/synthetic/phase_2c/labels/la
 Phase 2D will add better anatomy and mesh refinement.
 
 Later phases will explore garment placeholders, dressing agents, paid high-quality try-on rendering, and SMPL/SMPL-X integration if licensing, model access, and dataset governance permit it.
+
+## Phase 2D Anatomical Refinement
+
+Phase 2D improves the procedural mannequin so the renders are more useful for future measurement-model training:
+
+- Better chest, waist, abdomen, and hip sections
+- Body-shape profiles for slim, average, athletic, curvy, broad, and plus
+- Limb radii driven by sleeve, inseam, thigh, and calf measurements
+- Slight measurement-friendly pose variation
+- Render-quality controls for resolution, ambient occlusion, and contact shadows
+- Optional metadata columns in generated labels
+
+It still does not use SMPL/SMPL-X, garment dressing, model training, FashionApp integration, or paid try-on rendering.
+
+Dry run:
+
+```bash
+python -m synthetic.blender.run_blender_pipeline --config synthetic/blender/configs/phase_2d_render_config.example.json --dry-run
+```
+
+Actual Blender run:
+
+```bash
+blender --background --python synthetic/blender/scripts/render_parametric_body.py -- --config synthetic/blender/configs/phase_2d_render_config.example.json
+```
+
+Validate generated output:
+
+```bash
+python -m synthetic.generator.validate_dataset data/synthetic/phase_2d/labels/labels.csv
+```

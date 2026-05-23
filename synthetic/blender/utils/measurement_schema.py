@@ -17,6 +17,16 @@ REQUIRED_MEASUREMENT_COLUMNS = [
     "generator_version",
 ]
 
+OPTIONAL_METADATA_COLUMNS = [
+    "skin_tone_id",
+    "pose_variation_degrees",
+    "camera_distance",
+    "camera_focal_length",
+    "render_width",
+    "render_height",
+    "anatomy_version",
+]
+
 
 def validate_measurement_row(row: dict) -> bool:
     return all(column in row and row[column] not in ("", None) for column in REQUIRED_MEASUREMENT_COLUMNS)

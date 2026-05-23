@@ -5,13 +5,18 @@ import importlib
 import pytest
 
 from synthetic.blender.utils.blender_command import build_blender_command, format_command
-from synthetic.blender.utils.measurement_schema import REQUIRED_MEASUREMENT_COLUMNS, validate_measurement_row
+from synthetic.blender.utils.measurement_schema import (
+    OPTIONAL_METADATA_COLUMNS,
+    REQUIRED_MEASUREMENT_COLUMNS,
+    validate_measurement_row,
+)
 from synthetic.blender.utils.render_config import load_render_config, validate_render_config
 from synthetic.generator.generate_dataset import LABEL_COLUMNS
 from synthetic.generator.validate_dataset import validate_dataset
 
 CONFIG_PATH = "synthetic/blender/configs/phase_2b_render_config.example.json"
 PHASE_2C_CONFIG_PATH = "synthetic/blender/configs/phase_2c_render_config.example.json"
+PHASE_2D_CONFIG_PATH = "synthetic/blender/configs/phase_2d_render_config.example.json"
 
 
 def test_example_render_config_loads_and_validates() -> None:
@@ -122,6 +127,48 @@ def test_phase_2c_blender_command_can_be_built() -> None:
 
     assert command[-1] == PHASE_2C_CONFIG_PATH
     assert "render_parametric_body.py" in format_command(command)
+
+
+def test_phase_2d_render_config_loads_and_validates() -> None:
+    config = load_render_config(PHASE_2D_CONFIG_PATH)
+
+    assert config.generator_version == "phase_2d_anatomical_procedural_body_v1"
+    assert config.output_dir == "data/synthetic/phase_2d"
+    assert config.anatomy is not None
+    assert config.anatomy["enable_torso_taper"] is True
+    assert config.render_quality is not None
+    assert config.render_quality["resolution_percentage"] == 70
+
+
+def test_phase_2d_blender_command_can_be_built() -> None:
+    command = build_blender_command(
+        blender_executable="blender",
+        script_path="synthetic/blender/scripts/render_parametric_body.py",
+        config_path=PHASE_2D_CONFIG_PATH,
+        dry_run=True,
+    )
+
+    assert command[-1] == PHASE_2D_CONFIG_PATH
+    assert format_command(command).endswith("--config synthetic/blender/configs/phase_2d_render_config.example.json")
+
+
+def test_body_shape_adjustments_change_expected_scales() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    params = {"body_shape": "athletic"}
+
+    adjusted = module.apply_body_shape_adjustments(params)
+
+    assert adjusted["shoulder_scale"] > 1
+    assert adjusted["chest_scale"] > 1
+    assert adjusted["waist_scale"] < 1
+
+
+def test_optional_metadata_columns_exist_but_are_not_required() -> None:
+    row = {column: "value" for column in REQUIRED_MEASUREMENT_COLUMNS}
+
+    assert "skin_tone_id" in OPTIONAL_METADATA_COLUMNS
+    assert "anatomy_version" in OPTIONAL_METADATA_COLUMNS
+    assert validate_measurement_row(row) is True
 
 
 def test_measurement_schema_matches_dataset_label_columns() -> None:
