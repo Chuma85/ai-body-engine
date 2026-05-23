@@ -211,6 +211,40 @@ python -m pytest
 
 Phase 2D prepares the project for Phase 2E clothing placeholders and the Phase 3 training pipeline.
 
+## Phase 2E — Base Human Mesh Renderer Scaffold
+
+Phase 2E prepares the renderer to move beyond primitive procedural mannequins by supporting external base human mesh assets.
+
+This phase:
+
+- Adds `assets/body_meshes/` for local MakeHuman, MB-Lab, or custom Blender human meshes
+- Keeps large mesh assets ignored by git
+- Supports future `.blend`, `.fbx`, `.obj`, `.glb`, and `.gltf` assets
+- Adds a base-mesh render config with procedural fallback
+- Does not use SMPL/SMPL-X yet
+- Does not deform meshes yet
+- Does not train models or integrate with FashionApp
+
+Dry run:
+
+```bash
+python -m synthetic.blender.run_blender_pipeline --config synthetic/blender/configs/phase_2e_base_mesh_config.example.json --dry-run
+```
+
+Actual Blender render:
+
+```bash
+blender --background --python synthetic/blender/scripts/render_parametric_body.py -- --config synthetic/blender/configs/phase_2e_base_mesh_config.example.json
+```
+
+Validate generated labels:
+
+```bash
+python -m synthetic.generator.validate_dataset data/synthetic/phase_2e/labels/labels.csv
+```
+
+If `assets/body_meshes/base_human.glb` is not present, the Phase 2E example config falls back to the procedural body renderer.
+
 ## Future Phases
 
 - Phase 2 synthetic dataset generator

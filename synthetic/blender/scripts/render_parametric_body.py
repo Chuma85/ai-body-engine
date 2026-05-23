@@ -26,6 +26,10 @@ OPTIONAL_METADATA_COLUMNS = [
     "render_width",
     "render_height",
     "anatomy_version",
+    "renderer_mode",
+    "base_mesh_asset",
+    "mesh_deformation_enabled",
+    "fallback_used",
 ]
 LABEL_COLUMNS = [
     "sample_id",
@@ -73,7 +77,7 @@ def main() -> None:
         setup_world_background(bpy, config)
         setup_render_quality(bpy, config)
         material = create_material(bpy, f"{params['sample_id']}_skin", params["skin_tone"])
-        create_procedural_body(bpy, params, material, config)
+        render_metadata = create_body_from_config(bpy, params, config, material)
         setup_lighting(bpy, config, rng)
 
         front_path = output_dirs["front"] / f"{params['sample_id']}_front.png"
@@ -110,6 +114,10 @@ def main() -> None:
                 "render_width": config["image_width"],
                 "render_height": config["image_height"],
                 "anatomy_version": config.get("generator_version", GENERATOR_VERSION),
+                "renderer_mode": render_metadata["renderer_mode"],
+                "base_mesh_asset": render_metadata["base_mesh_asset"],
+                "mesh_deformation_enabled": render_metadata["mesh_deformation_enabled"],
+                "fallback_used": render_metadata["fallback_used"],
             }
         )
 
@@ -141,6 +149,14 @@ def repo_relative_path(path: Path) -> str:
         return resolved_path.relative_to(repo_root()).as_posix()
     except ValueError:
         return os.path.relpath(resolved_path, repo_root()).replace(os.sep, "/")
+
+
+def resolve_repo_path(path_value: str) -> Path:
+    path = Path(path_value).expanduser()
+    if path.is_absolute() or PureWindowsPath(path_value).is_absolute() or PurePosixPath(path_value).is_absolute():
+        return path.resolve()
+
+    return (repo_root() / path).resolve()
 
 
 def ensure_output_dirs(output_dir: str | Path) -> dict[str, Path]:
@@ -235,6 +251,129 @@ def create_cylinder_limb(
     obj.name = name
     obj.data.materials.append(material)
     return obj
+
+
+def create_body_from_config(bpy, params: dict, config: dict, material) -> dict[str, object]:
+    base_mesh = config.get("base_mesh") or {}
+    mesh_deformation = config.get("mesh_deformation") or {}
+    metadata = {
+        "renderer_mode": "procedural_fallback",
+        "base_mesh_asset": "",
+        "mesh_deformation_enabled": bool(mesh_deformation.get("enabled", False)),
+        "fallback_used": False,
+    }
+
+    if base_mesh.get("enabled", False):
+        asset_path = resolve_repo_path(base_mesh.get("asset_path", ""))
+        metadata["base_mesh_asset"] = repo_relative_path(asset_path)
+        imported_objects = load_base_mesh_if_available(bpy, str(asset_path), base_mesh.get("format", asset_path.suffix.lstrip(".")))
+
+        if imported_objects:
+            if base_mesh.get("normalize_scale", True):
+                normalize_imported_mesh(bpy, imported_objects, _body_dimensions(params)["height"])
+            if base_mesh.get("center_on_origin", True):
+                center_objects_on_origin(bpy, imported_objects)
+            apply_material_to_objects(bpy, imported_objects, material)
+            metadata["renderer_mode"] = "base_mesh"
+            metadata["fallback_used"] = False
+            return metadata
+
+        if not base_mesh.get("fallback_to_procedural", True):
+            raise FileNotFoundError(f"Base mesh asset not found or unsupported: {asset_path}")
+
+        print(f"Warning: base mesh unavailable at {asset_path}. Falling back to procedural body.")
+        metadata["fallback_used"] = True
+
+    create_procedural_body(bpy, params, material, config)
+    return metadata
+
+
+def load_base_mesh_if_available(bpy, asset_path: str, asset_format: str) -> list | None:
+    path = Path(asset_path)
+    if not path.exists():
+        return None
+
+    return import_mesh_asset(bpy, path, asset_format)
+
+
+def import_mesh_asset(bpy, asset_path: Path, asset_format: str) -> list:
+    asset_format = asset_format.lower().lstrip(".")
+    before = set(bpy.context.scene.objects)
+
+    if asset_format in {"glb", "gltf"}:
+        bpy.ops.import_scene.gltf(filepath=str(asset_path))
+    elif asset_format == "fbx":
+        bpy.ops.import_scene.fbx(filepath=str(asset_path))
+    elif asset_format == "obj":
+        if hasattr(bpy.ops.wm, "obj_import"):
+            bpy.ops.wm.obj_import(filepath=str(asset_path))
+        else:
+            bpy.ops.import_scene.obj(filepath=str(asset_path))
+    elif asset_format == "blend":
+        print("Blend append/link import is not implemented in Phase 2E.")
+        return []
+    else:
+        raise ValueError(f"Unsupported base mesh format: {asset_format}")
+
+    imported_objects = [obj for obj in bpy.context.scene.objects if obj not in before]
+    return imported_objects
+
+
+def normalize_imported_mesh(bpy, imported_objects: list, target_height_units: float) -> None:
+    bounds = _object_bounds(imported_objects)
+    height = bounds["max_z"] - bounds["min_z"]
+    if height <= 0:
+        return
+
+    scale_factor = target_height_units / height
+    for obj in imported_objects:
+        obj.scale = (obj.scale[0] * scale_factor, obj.scale[1] * scale_factor, obj.scale[2] * scale_factor)
+    bpy.context.view_layer.update()
+
+
+def center_objects_on_origin(bpy, imported_objects: list) -> None:
+    bounds = _object_bounds(imported_objects)
+    center_x = (bounds["min_x"] + bounds["max_x"]) / 2
+    center_y = (bounds["min_y"] + bounds["max_y"]) / 2
+    min_z = bounds["min_z"]
+
+    for obj in imported_objects:
+        obj.location.x -= center_x
+        obj.location.y -= center_y
+        obj.location.z -= min_z
+    bpy.context.view_layer.update()
+
+
+def apply_material_to_objects(bpy, imported_objects: list, material) -> None:
+    for obj in imported_objects:
+        if hasattr(obj, "data") and hasattr(obj.data, "materials"):
+            obj.data.materials.clear()
+            obj.data.materials.append(material)
+
+
+def _object_bounds(objects: list) -> dict[str, float]:
+    xs: list[float] = []
+    ys: list[float] = []
+    zs: list[float] = []
+
+    for obj in objects:
+        for corner in getattr(obj, "bound_box", []):
+            world_corner = obj.matrix_world @ __import__("mathutils").Vector(corner)
+            xs.append(world_corner.x)
+            ys.append(world_corner.y)
+            zs.append(world_corner.z)
+
+    if not xs:
+        return {"min_x": 0, "max_x": 0, "min_y": 0, "max_y": 0, "min_z": 0, "max_z": 0}
+
+    return {
+        "min_x": min(xs),
+        "max_x": max(xs),
+        "min_y": min(ys),
+        "max_y": max(ys),
+        "min_z": min(zs),
+        "max_z": max(zs),
+    }
 
 
 def create_procedural_body(bpy, params: dict, material, config: dict | None = None) -> None:

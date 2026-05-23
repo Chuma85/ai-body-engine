@@ -25,6 +25,10 @@ OPTIONAL_METADATA_COLUMNS = [
     "render_width",
     "render_height",
     "anatomy_version",
+    "renderer_mode",
+    "base_mesh_asset",
+    "mesh_deformation_enabled",
+    "fallback_used",
 ]
 
 

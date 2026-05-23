@@ -17,6 +17,7 @@ from synthetic.generator.validate_dataset import validate_dataset
 CONFIG_PATH = "synthetic/blender/configs/phase_2b_render_config.example.json"
 PHASE_2C_CONFIG_PATH = "synthetic/blender/configs/phase_2c_render_config.example.json"
 PHASE_2D_CONFIG_PATH = "synthetic/blender/configs/phase_2d_render_config.example.json"
+PHASE_2E_CONFIG_PATH = "synthetic/blender/configs/phase_2e_base_mesh_config.example.json"
 
 
 def test_example_render_config_loads_and_validates() -> None:
@@ -168,7 +169,54 @@ def test_optional_metadata_columns_exist_but_are_not_required() -> None:
 
     assert "skin_tone_id" in OPTIONAL_METADATA_COLUMNS
     assert "anatomy_version" in OPTIONAL_METADATA_COLUMNS
+    assert "renderer_mode" in OPTIONAL_METADATA_COLUMNS
+    assert "fallback_used" in OPTIONAL_METADATA_COLUMNS
     assert validate_measurement_row(row) is True
+
+
+def test_phase_2e_base_mesh_config_loads_and_validates() -> None:
+    config = load_render_config(PHASE_2E_CONFIG_PATH)
+
+    assert config.generator_version == "phase_2e_base_mesh_renderer_v1"
+    assert config.output_dir == "data/synthetic/phase_2e"
+    assert config.base_mesh is not None
+    assert config.base_mesh["enabled"] is True
+    assert config.base_mesh["fallback_to_procedural"] is True
+    assert config.mesh_deformation is not None
+    assert config.mesh_deformation["enabled"] is False
+
+
+def test_base_mesh_config_is_optional_for_older_configs() -> None:
+    config = load_render_config(PHASE_2D_CONFIG_PATH)
+
+    assert config.base_mesh is None
+    assert config.mesh_deformation is None
+
+
+def test_phase_2e_blender_command_can_be_built() -> None:
+    command = build_blender_command(
+        blender_executable="blender",
+        script_path="synthetic/blender/scripts/render_parametric_body.py",
+        config_path=PHASE_2E_CONFIG_PATH,
+        dry_run=True,
+    )
+
+    assert command[-1] == PHASE_2E_CONFIG_PATH
+    assert format_command(command).endswith("--config synthetic/blender/configs/phase_2e_base_mesh_config.example.json")
+
+
+def test_resolve_repo_path_resolves_base_mesh_asset() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    resolved = module.resolve_repo_path("assets/body_meshes/base_human.glb")
+
+    assert resolved == module.repo_root() / "assets" / "body_meshes" / "base_human.glb"
+    assert resolved.is_absolute()
+
+
+def test_missing_base_mesh_fallback_metadata_without_blender_calls() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+
+    assert module.load_base_mesh_if_available(object(), str(module.repo_root() / "assets" / "body_meshes" / "missing.glb"), "glb") is None
 
 
 def test_measurement_schema_matches_dataset_label_columns() -> None:

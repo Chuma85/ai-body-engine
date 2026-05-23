@@ -93,3 +93,43 @@ Validate generated output:
 ```bash
 python -m synthetic.generator.validate_dataset data/synthetic/phase_2d/labels/labels.csv
 ```
+
+## Phase 2E Base Human Mesh Rendering
+
+Phase 2E adds base human mesh import support so the synthetic pipeline can move beyond primitive mannequin geometry.
+
+Supported scaffold behavior:
+
+- Resolve mesh assets relative to the repository root
+- Import `.glb` / `.gltf`, `.obj`, and `.fbx` files in Blender
+- Keep `.blend` append/link support documented for a later phase
+- Normalize imported mesh scale
+- Center imported mesh on the origin
+- Apply generated skin-tone material
+- Fall back to the procedural body renderer if the configured mesh is missing and fallback is enabled
+
+Large mesh assets are intentionally ignored by git. Place local assets under:
+
+```text
+assets/body_meshes/
+```
+
+Dry run:
+
+```bash
+python -m synthetic.blender.run_blender_pipeline --config synthetic/blender/configs/phase_2e_base_mesh_config.example.json --dry-run
+```
+
+Actual run:
+
+```bash
+blender --background --python synthetic/blender/scripts/render_parametric_body.py -- --config synthetic/blender/configs/phase_2e_base_mesh_config.example.json
+```
+
+Validate:
+
+```bash
+python -m synthetic.generator.validate_dataset data/synthetic/phase_2e/labels/labels.csv
+```
+
+If no mesh is available at `assets/body_meshes/base_human.glb`, the example config uses `procedural_fallback` mode. Real mesh deformation comes later.

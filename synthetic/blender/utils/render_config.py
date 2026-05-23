@@ -39,6 +39,8 @@ class RenderConfig:
     materials: dict[str, Any] | None = None
     anatomy: dict[str, Any] | None = None
     render_quality: dict[str, Any] | None = None
+    base_mesh: dict[str, Any] | None = None
+    mesh_deformation: dict[str, Any] | None = None
 
 
 def load_render_config(path: str) -> RenderConfig:
