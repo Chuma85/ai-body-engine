@@ -11,7 +11,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import random
 import sys
 
@@ -47,9 +48,12 @@ def main() -> None:
         return
 
     config = load_config(args.config)
-    output_dirs = ensure_output_dirs(config["output_dir"])
+    resolved_output_dir = resolve_output_dir(config["output_dir"])
+    output_dirs = ensure_output_dirs(resolved_output_dir)
     rng = random.Random(config["random_seed"])
     rows = []
+
+    print(f"Resolved output dir: {resolved_output_dir}")
 
     for index in range(1, config["sample_count"] + 1):
         params = generate_body_parameters(index, rng, config)
@@ -71,8 +75,8 @@ def main() -> None:
         rows.append(
             {
                 "sample_id": params["sample_id"],
-                "front_image_path": front_path.as_posix(),
-                "side_image_path": side_path.as_posix(),
+                "front_image_path": repo_relative_path(front_path),
+                "side_image_path": repo_relative_path(side_path),
                 "height_cm": params["height_cm"],
                 "weight_kg": params["weight_kg"],
                 "chest_cm": params["chest_cm"],
@@ -90,7 +94,7 @@ def main() -> None:
         )
 
     write_labels_csv(rows, output_dirs["labels"] / "labels.csv")
-    print(f"Rendered {len(rows)} procedural body samples to {config['output_dir']}")
+    print(f"Rendered {len(rows)} procedural body samples to {resolved_output_dir}")
 
 
 def load_config(config_path: str) -> dict:
@@ -98,8 +102,29 @@ def load_config(config_path: str) -> dict:
         return json.load(config_file)
 
 
-def ensure_output_dirs(output_dir: str) -> dict[str, Path]:
-    root = Path(output_dir)
+def resolve_output_dir(output_dir: str) -> Path:
+    raw_output_dir = output_dir.strip()
+    path = Path(raw_output_dir).expanduser()
+    if path.is_absolute() or PureWindowsPath(raw_output_dir).is_absolute() or PurePosixPath(raw_output_dir).is_absolute():
+        return path.resolve()
+
+    return (repo_root() / path).resolve()
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def repo_relative_path(path: Path) -> str:
+    resolved_path = path.resolve()
+    try:
+        return resolved_path.relative_to(repo_root()).as_posix()
+    except ValueError:
+        return os.path.relpath(resolved_path, repo_root()).replace(os.sep, "/")
+
+
+def ensure_output_dirs(output_dir: str | Path) -> dict[str, Path]:
+    root = resolve_output_dir(output_dir) if isinstance(output_dir, str) else output_dir.resolve()
     paths = {
         "front": root / "images" / "front",
         "side": root / "images" / "side",
@@ -247,6 +272,7 @@ def render_view(bpy, output_path: Path, width: int, height: int) -> None:
     bpy.context.scene.render.resolution_x = width
     bpy.context.scene.render.resolution_y = height
     bpy.context.scene.render.filepath = str(output_path)
+    print(f"Rendering: {output_path}")
     bpy.ops.render.render(write_still=True)
 
 

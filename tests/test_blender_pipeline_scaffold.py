@@ -65,6 +65,44 @@ def test_render_parametric_body_imports_without_bpy() -> None:
     assert hasattr(module, "main")
 
 
+def test_blender_output_dir_resolution_for_relative_paths() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    resolved = module.resolve_output_dir("data/synthetic/phase_2c")
+
+    assert resolved == module.repo_root() / "data" / "synthetic" / "phase_2c"
+    assert resolved.is_absolute()
+
+
+def test_blender_output_dir_resolution_for_absolute_paths(tmp_path) -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    resolved = module.resolve_output_dir(str(tmp_path / "phase_2c"))
+
+    assert resolved == (tmp_path / "phase_2c").resolve()
+
+
+def test_blender_output_dir_resolution_for_windows_paths() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    resolved = module.resolve_output_dir(r"C:\ai-body-engine-test\phase_2c")
+
+    assert resolved.is_absolute()
+    assert str(resolved).lower().endswith(r"ai-body-engine-test\phase_2c")
+
+
+def test_blender_output_dir_resolution_for_posix_paths() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    resolved = module.resolve_output_dir("/tmp/ai-body-engine/phase_2c")
+
+    assert resolved.is_absolute()
+    assert "ai-body-engine" in resolved.as_posix()
+
+
+def test_blender_label_paths_remain_repo_relative() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    absolute_path = module.repo_root() / "data" / "synthetic" / "phase_2c" / "images" / "front" / "sample.png"
+
+    assert module.repo_relative_path(absolute_path) == "data/synthetic/phase_2c/images/front/sample.png"
+
+
 def test_phase_2c_render_config_loads_and_validates() -> None:
     config = load_render_config(PHASE_2C_CONFIG_PATH)
 
