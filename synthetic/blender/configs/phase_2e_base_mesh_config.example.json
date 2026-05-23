@@ -11,8 +11,8 @@
   "views": ["front", "side"],
   "base_mesh": {
     "enabled": true,
-    "asset_path": "assets/body_meshes/base_human.glb",
-    "format": "glb",
+    "asset_path": "assets/body_meshes/base_human.obj",
+    "format": "obj",
     "fallback_to_procedural": true,
     "normalize_scale": true,
     "center_on_origin": true
