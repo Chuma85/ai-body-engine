@@ -171,3 +171,48 @@ Open render:
 ```bash
 code data/synthetic/phase_2f/images/front/sample_000001_front.png
 ```
+
+## Phase 2G Rigged / Shape-Key Mesh Pipeline
+
+Phase 2F can distort static OBJ meshes because it scales approximate vertex regions without bones or morph targets. Phase 2G scaffolds the cleaner deformation path for higher-quality human variation.
+
+The renderer now supports:
+
+- Rigged FBX-style input assets
+- Armature detection
+- Shape-key / morph-target detection
+- Shape-key deformation when configured names match imported keys
+- Conservative bone scaling when armatures exist but no matching shape keys are found
+- Safe object-scale fallback for static meshes
+
+Phase 2G intentionally does not use SMPL/SMPL-X yet. It also does not train models, dress garments, integrate with FashionApp, or add paid try-on rendering.
+
+Recommended assets:
+
+- MakeHuman FBX exports with skeletons
+- MB-Lab generated Blender characters
+- Custom Blender characters with shape keys or body morph targets
+
+Dry run:
+
+```bash
+python -m synthetic.blender.run_blender_pipeline --config synthetic/blender/configs/phase_2g_rigged_mesh_config.example.json --dry-run
+```
+
+Actual render:
+
+```bash
+blender --background --python synthetic/blender/scripts/render_parametric_body.py -- --config synthetic/blender/configs/phase_2g_rigged_mesh_config.example.json
+```
+
+Validate:
+
+```bash
+python -m synthetic.generator.validate_dataset data/synthetic/phase_2g/labels/labels.csv
+```
+
+Open render:
+
+```bash
+code data/synthetic/phase_2g/images/front/sample_000001_front.png
+```

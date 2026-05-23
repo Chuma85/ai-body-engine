@@ -284,6 +284,44 @@ code data/synthetic/phase_2f/images/front/sample_000001_front.png
 
 Future phases can improve deformation with rigged meshes, blend shapes, or parametric human models.
 
+## Phase 2G — Rigged / Shape-Key Mesh Pipeline
+
+Phase 2F proved that imported static meshes can be varied, but rough vertex-region scaling can distort non-rigged OBJ bodies. Phase 2G prepares a cleaner path using rigged meshes, armatures, and shape keys.
+
+This phase:
+
+- Adds a rigged mesh config that targets `assets/body_meshes/base_human_rigged.fbx`
+- Detects armatures and shape keys when Blender imports a suitable asset
+- Prefers shape-key deformation, then conservative bone scaling, then safe object-scale fallback
+- Avoids the rough Phase 2F region-scaling path for Phase 2G configs
+- Still does not use SMPL/SMPL-X, train models, dress garments, or integrate with FashionApp
+
+Best inputs are MakeHuman, MB-Lab, or custom Blender characters exported with an armature or body morph targets.
+
+Dry run:
+
+```bash
+python -m synthetic.blender.run_blender_pipeline --config synthetic/blender/configs/phase_2g_rigged_mesh_config.example.json --dry-run
+```
+
+Actual Blender render:
+
+```bash
+blender --background --python synthetic/blender/scripts/render_parametric_body.py -- --config synthetic/blender/configs/phase_2g_rigged_mesh_config.example.json
+```
+
+Validate generated labels:
+
+```bash
+python -m synthetic.generator.validate_dataset data/synthetic/phase_2g/labels/labels.csv
+```
+
+Open a render:
+
+```bash
+code data/synthetic/phase_2g/images/front/sample_000001_front.png
+```
+
 ## Future Phases
 
 - Phase 2 synthetic dataset generator

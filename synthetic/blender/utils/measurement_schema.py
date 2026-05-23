@@ -34,6 +34,11 @@ OPTIONAL_METADATA_COLUMNS = [
     "preserve_height",
     "auto_frame_body",
     "camera_margin",
+    "rigging_enabled",
+    "armature_detected",
+    "shape_keys_detected",
+    "deformation_applied",
+    "shape_key_matches",
 ]
 
 

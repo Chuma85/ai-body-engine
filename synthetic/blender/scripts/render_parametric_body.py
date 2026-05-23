@@ -16,6 +16,8 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import random
 import sys
 
+from synthetic.blender.utils.deformation_math import compute_shape_key_targets
+
 GENERATOR_VERSION = "phase_2c_blender_procedural_body_v1"
 BODY_SHAPES = ("slim", "average", "athletic", "curvy", "broad", "plus")
 OPTIONAL_METADATA_COLUMNS = [
@@ -35,6 +37,11 @@ OPTIONAL_METADATA_COLUMNS = [
     "preserve_height",
     "auto_frame_body",
     "camera_margin",
+    "rigging_enabled",
+    "armature_detected",
+    "shape_keys_detected",
+    "deformation_applied",
+    "shape_key_matches",
 ]
 LABEL_COLUMNS = [
     "sample_id",
@@ -146,6 +153,11 @@ def main() -> None:
                 "preserve_height": render_metadata["preserve_height"],
                 "auto_frame_body": render_metadata["auto_frame_body"],
                 "camera_margin": render_metadata["camera_margin"],
+                "rigging_enabled": render_metadata["rigging_enabled"],
+                "armature_detected": render_metadata["armature_detected"],
+                "shape_keys_detected": render_metadata["shape_keys_detected"],
+                "deformation_applied": render_metadata["deformation_applied"],
+                "shape_key_matches": render_metadata["shape_key_matches"],
             }
         )
 
@@ -284,6 +296,7 @@ def create_cylinder_limb(
 def create_body_from_config(bpy, params: dict, config: dict, material) -> dict[str, object]:
     base_mesh = config.get("base_mesh") or {}
     mesh_deformation = config.get("mesh_deformation") or {}
+    rigging = config.get("rigging") or {}
     metadata = {
         "renderer_mode": "procedural_fallback",
         "base_mesh_asset": "",
@@ -294,6 +307,11 @@ def create_body_from_config(bpy, params: dict, config: dict, material) -> dict[s
         "preserve_height": bool(mesh_deformation.get("preserve_height", False)),
         "auto_frame_body": bool((config.get("camera") or {}).get("auto_frame_body", False)),
         "camera_margin": (config.get("camera") or {}).get("margin", ""),
+        "rigging_enabled": bool(rigging.get("enabled", False)),
+        "armature_detected": False,
+        "shape_keys_detected": False,
+        "deformation_applied": False,
+        "shape_key_matches": "",
         "objects": [],
     }
 
@@ -301,6 +319,13 @@ def create_body_from_config(bpy, params: dict, config: dict, material) -> dict[s
         asset_path = resolve_repo_path(base_mesh.get("asset_path", ""))
         metadata["base_mesh_asset"] = repo_relative_path(asset_path)
         imported_objects = load_base_mesh_if_available(bpy, str(asset_path), base_mesh.get("format", asset_path.suffix.lstrip(".")))
+        if not imported_objects and base_mesh.get("fallback_to_static_mesh", False):
+            static_asset_path = repo_root() / "assets" / "body_meshes" / "base_human.obj"
+            imported_objects = load_base_mesh_if_available(bpy, str(static_asset_path), "obj")
+            if imported_objects:
+                print(f"Warning: rigged mesh unavailable at {asset_path}. Using static mesh fallback {static_asset_path}.")
+                metadata["base_mesh_asset"] = repo_relative_path(static_asset_path)
+                metadata["fallback_used"] = True
 
         if imported_objects:
             if base_mesh.get("normalize_scale", True):
@@ -308,15 +333,20 @@ def create_body_from_config(bpy, params: dict, config: dict, material) -> dict[s
             if base_mesh.get("center_on_origin", True):
                 center_objects_on_origin(bpy, imported_objects)
             if mesh_deformation.get("enabled", False):
-                deformation_result = apply_region_scale_deformation(bpy, imported_objects, params, config)
+                if mesh_deformation.get("mode") == "rigged_or_shape_key_v1" or rigging.get("enabled", False):
+                    deformation_result = apply_rigged_mesh_deformation(bpy, imported_objects, params, config)
+                else:
+                    deformation_result = apply_region_scale_deformation(bpy, imported_objects, params, config)
                 if mesh_deformation.get("preserve_height", False):
                     normalize_objects_height(bpy, imported_objects, _body_dimensions(params)["height"])
                 if (config.get("camera") or {}).get("center_on_body", True):
                     center_objects_on_origin(bpy, imported_objects)
                 metadata.update(deformation_result)
             apply_material_to_objects(bpy, imported_objects, material)
-            metadata["renderer_mode"] = "base_mesh"
-            metadata["fallback_used"] = False
+            if metadata["renderer_mode"] == "procedural_fallback":
+                metadata["renderer_mode"] = "base_mesh"
+            if metadata["deformation_mode"] not in {"safe_object_scale", "static_mesh_safe_scale"}:
+                metadata["fallback_used"] = False
             metadata["objects"] = imported_objects
             return metadata
 
@@ -379,7 +409,169 @@ def apply_region_scale_deformation(bpy, objects: list, params: dict, config: dic
         "deformation_mode": mesh_deformation.get("mode", "region_scale_v1"),
         "deformation_strength": mesh_deformation.get("strength", 0.35),
         "preserve_height": bool(mesh_deformation.get("preserve_height", True)),
+        "deformation_applied": True,
     }
+
+
+def detect_armatures(bpy) -> list:
+    return [obj for obj in bpy.context.scene.objects if getattr(obj, "type", "") == "ARMATURE"]
+
+
+def detect_mesh_objects(bpy) -> list:
+    return [obj for obj in bpy.context.scene.objects if getattr(obj, "type", "") == "MESH"]
+
+
+def detect_shape_keys(mesh_objects: list) -> dict[str, list[str]]:
+    shape_keys: dict[str, list[str]] = {}
+
+    for obj in mesh_objects:
+        key_blocks = getattr(getattr(getattr(obj, "data", None), "shape_keys", None), "key_blocks", None)
+        if not key_blocks:
+            continue
+
+        names = [key_block.name for key_block in key_blocks if key_block.name.lower() != "basis"]
+        if names:
+            shape_keys[obj.name] = names
+
+    return shape_keys
+
+
+def summarize_rigging(imported_objects: list) -> dict[str, object]:
+    armatures = [obj for obj in imported_objects if getattr(obj, "type", "") == "ARMATURE"]
+    mesh_objects = [obj for obj in imported_objects if getattr(obj, "type", "") == "MESH"]
+    shape_keys = detect_shape_keys(mesh_objects)
+
+    return {
+        "armatures": armatures,
+        "mesh_objects": mesh_objects,
+        "shape_keys": shape_keys,
+        "armature_detected": bool(armatures),
+        "shape_keys_detected": any(shape_keys.values()),
+    }
+
+
+def apply_shape_key_deformation(mesh_objects: list, params: dict, config: dict) -> dict[str, object]:
+    shape_key_mapping = config.get("shape_key_mapping") or {}
+    targets = compute_shape_key_targets(params, shape_key_mapping)
+    matches: list[str] = []
+
+    for obj in mesh_objects:
+        key_blocks = getattr(getattr(getattr(obj, "data", None), "shape_keys", None), "key_blocks", None)
+        if not key_blocks:
+            continue
+
+        for category, aliases in shape_key_mapping.items():
+            target_value = targets.get(category)
+            if target_value is None:
+                continue
+
+            lowered_aliases = {alias.lower() for alias in aliases}
+            for key_block in key_blocks:
+                key_name = key_block.name.lower()
+                if key_name == "basis":
+                    continue
+                if key_name in lowered_aliases or any(alias in key_name for alias in lowered_aliases):
+                    key_block.value = target_value
+                    matches.append(f"{obj.name}:{key_block.name}")
+
+    return {
+        "deformation_mode": "shape_keys",
+        "deformation_applied": bool(matches),
+        "shape_key_matches": ",".join(sorted(matches)),
+        "fallback_used": False,
+    }
+
+
+def apply_bone_scale_deformation(bpy, armatures: list, params: dict, config: dict) -> dict[str, object]:
+    mesh_deformation = config.get("mesh_deformation") or {}
+    strength = mesh_deformation.get("strength", 0.30)
+    factors = compute_region_scale_factors({**params, "deformation_strength": strength * 0.35})
+    applied = False
+
+    bone_regions = {
+        "shoulder": "shoulders",
+        "clavicle": "shoulders",
+        "chest": "chest",
+        "spine": "waist",
+        "hips": "hips",
+        "pelvis": "hips",
+        "upper_arm": "arms",
+        "arm": "arms",
+        "thigh": "legs",
+        "calf": "calves",
+        "shin": "calves",
+    }
+
+    for armature in armatures:
+        pose_bones = getattr(getattr(armature, "pose", None), "bones", [])
+        for bone in pose_bones:
+            bone_name = bone.name.lower()
+            region = next((region for marker, region in bone_regions.items() if marker in bone_name), None)
+            if not region:
+                continue
+
+            scale = _clamp(factors.get(region, 1.0), 0.92, 1.08)
+            bone.scale = (scale, scale, bone.scale[2])
+            applied = True
+
+    bpy.context.view_layer.update()
+    return {
+        "deformation_mode": "bones",
+        "deformation_applied": applied,
+        "fallback_used": not applied,
+        "shape_key_matches": "",
+    }
+
+
+def apply_safe_object_scale_fallback(bpy, objects: list, params: dict, config: dict) -> dict[str, object]:
+    mesh_deformation = config.get("mesh_deformation") or {}
+    strength = mesh_deformation.get("strength", 0.30)
+    factors = compute_region_scale_factors({**params, "deformation_strength": strength})
+    width_scale = _clamp((factors["shoulders"] + factors["chest"] + factors["hips"]) / 3, 0.88, 1.16)
+    depth_scale = _clamp((factors["chest"] + factors["waist"] + factors["hips"]) / 3, 0.88, 1.16)
+    applied = False
+
+    for obj in objects:
+        if getattr(obj, "type", "") != "MESH":
+            continue
+        obj.scale = (obj.scale[0] * width_scale, obj.scale[1] * depth_scale, obj.scale[2])
+        applied = True
+
+    bpy.context.view_layer.update()
+    return {
+        "renderer_mode": "static_mesh_safe_scale",
+        "deformation_mode": mesh_deformation.get("fallback_mode", "safe_object_scale"),
+        "deformation_applied": applied,
+        "fallback_used": True,
+        "shape_key_matches": "",
+    }
+
+
+def apply_rigged_mesh_deformation(bpy, imported_objects: list, params: dict, config: dict) -> dict[str, object]:
+    summary = summarize_rigging(imported_objects)
+    metadata = {
+        "rigging_enabled": bool((config.get("rigging") or {}).get("enabled", False)),
+        "armature_detected": summary["armature_detected"],
+        "shape_keys_detected": summary["shape_keys_detected"],
+        "deformation_applied": False,
+        "shape_key_matches": "",
+    }
+
+    if summary["shape_keys_detected"]:
+        shape_result = apply_shape_key_deformation(summary["mesh_objects"], params, config)
+        metadata.update(shape_result)
+        if shape_result["deformation_applied"]:
+            return metadata
+
+    if summary["armature_detected"]:
+        bone_result = apply_bone_scale_deformation(bpy, summary["armatures"], params, config)
+        metadata.update(bone_result)
+        if bone_result["deformation_applied"]:
+            return metadata
+
+    fallback_result = apply_safe_object_scale_fallback(bpy, summary["mesh_objects"], params, config)
+    metadata.update(fallback_result)
+    return metadata
 
 
 def _region_scales_for_vertex(z_ratio: float, world_vertex, center_x: float, center_y: float, scale_factors: dict[str, float], regions: dict) -> tuple[float, float, float]:

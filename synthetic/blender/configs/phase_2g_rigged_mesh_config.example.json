@@ -1,0 +1,79 @@
+{
+  "generator_version": "phase_2g_rigged_mesh_pipeline_v1",
+  "output_dir": "data/synthetic/phase_2g",
+  "sample_count": 5,
+  "image_width": 768,
+  "image_height": 1024,
+  "camera_distance": 4.5,
+  "camera_focal_length": 65,
+  "render_engine": "BLENDER_EEVEE_NEXT",
+  "random_seed": 42,
+  "views": ["front", "side"],
+  "base_mesh": {
+    "enabled": true,
+    "asset_path": "assets/body_meshes/base_human_rigged.fbx",
+    "format": "fbx",
+    "fallback_to_static_mesh": true,
+    "fallback_to_procedural": true,
+    "normalize_scale": true,
+    "center_on_origin": true
+  },
+  "rigging": {
+    "enabled": true,
+    "require_armature": false,
+    "detect_armature": true,
+    "detect_shape_keys": true,
+    "preferred_deformation_mode": "shape_keys_then_bones_then_safe_scale"
+  },
+  "shape_key_mapping": {
+    "height": ["height", "Height", "body_height"],
+    "weight": ["weight", "Weight", "body_weight"],
+    "chest": ["chest", "Chest", "breast", "torso_width"],
+    "waist": ["waist", "Waist", "belly", "abdomen"],
+    "hips": ["hips", "Hips", "pelvis"],
+    "shoulders": ["shoulders", "Shoulders", "shoulder_width"],
+    "muscle": ["muscle", "Muscle", "athletic"],
+    "body_fat": ["fat", "Fat", "body_fat", "heavy"]
+  },
+  "mesh_deformation": {
+    "enabled": true,
+    "mode": "rigged_or_shape_key_v1",
+    "strength": 0.30,
+    "fallback_mode": "safe_object_scale",
+    "preserve_height": true
+  },
+  "camera": {
+    "auto_frame_body": true,
+    "margin": 0.18,
+    "center_on_body": true
+  },
+  "body_parameter_ranges": {
+    "height_cm": [150, 205],
+    "weight_kg": [45, 130],
+    "chest_cm": [75, 130],
+    "waist_cm": [55, 125],
+    "hip_cm": [75, 135],
+    "shoulder_cm": [35, 60],
+    "inseam_cm": [65, 95],
+    "sleeve_cm": [50, 75],
+    "neck_cm": [30, 50],
+    "thigh_cm": [40, 80],
+    "calf_cm": [28, 55]
+  },
+  "lighting": {
+    "type": "three_point",
+    "randomize_strength": true
+  },
+  "background": {
+    "type": "plain",
+    "color": [1, 1, 1]
+  },
+  "materials": {
+    "skin_tones": [
+      [0.75, 0.55, 0.42, 1.0],
+      [0.55, 0.36, 0.25, 1.0],
+      [0.90, 0.72, 0.58, 1.0],
+      [0.36, 0.22, 0.16, 1.0]
+    ]
+  }
+}

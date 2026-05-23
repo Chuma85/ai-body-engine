@@ -42,6 +42,8 @@ class RenderConfig:
     base_mesh: dict[str, Any] | None = None
     mesh_deformation: dict[str, Any] | None = None
     camera: dict[str, Any] | None = None
+    rigging: dict[str, Any] | None = None
+    shape_key_mapping: dict[str, list[str]] | None = None
 
 
 def load_render_config(path: str) -> RenderConfig:

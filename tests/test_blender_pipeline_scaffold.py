@@ -5,6 +5,7 @@ import importlib
 import pytest
 
 from synthetic.blender.utils.blender_command import build_blender_command, format_command
+from synthetic.blender.utils.deformation_math import clamp, compute_shape_key_targets, normalize_measurement_to_unit
 from synthetic.blender.utils.measurement_schema import (
     OPTIONAL_METADATA_COLUMNS,
     REQUIRED_MEASUREMENT_COLUMNS,
@@ -19,6 +20,7 @@ PHASE_2C_CONFIG_PATH = "synthetic/blender/configs/phase_2c_render_config.example
 PHASE_2D_CONFIG_PATH = "synthetic/blender/configs/phase_2d_render_config.example.json"
 PHASE_2E_CONFIG_PATH = "synthetic/blender/configs/phase_2e_base_mesh_config.example.json"
 PHASE_2F_CONFIG_PATH = "synthetic/blender/configs/phase_2f_mesh_variation_config.example.json"
+PHASE_2G_CONFIG_PATH = "synthetic/blender/configs/phase_2g_rigged_mesh_config.example.json"
 
 
 def test_example_render_config_loads_and_validates() -> None:
@@ -172,6 +174,8 @@ def test_optional_metadata_columns_exist_but_are_not_required() -> None:
     assert "anatomy_version" in OPTIONAL_METADATA_COLUMNS
     assert "renderer_mode" in OPTIONAL_METADATA_COLUMNS
     assert "fallback_used" in OPTIONAL_METADATA_COLUMNS
+    assert "rigging_enabled" in OPTIONAL_METADATA_COLUMNS
+    assert "shape_key_matches" in OPTIONAL_METADATA_COLUMNS
     assert validate_measurement_row(row) is True
 
 
@@ -289,6 +293,78 @@ def test_region_scale_factors_respond_to_measurements() -> None:
 
 def test_measurement_schema_matches_dataset_label_columns() -> None:
     assert REQUIRED_MEASUREMENT_COLUMNS == LABEL_COLUMNS
+
+
+def test_phase_2g_rigged_mesh_config_loads_and_validates() -> None:
+    config = load_render_config(PHASE_2G_CONFIG_PATH)
+
+    assert config.generator_version == "phase_2g_rigged_mesh_pipeline_v1"
+    assert config.output_dir == "data/synthetic/phase_2g"
+    assert config.base_mesh is not None
+    assert config.base_mesh["asset_path"] == "assets/body_meshes/base_human_rigged.fbx"
+    assert config.base_mesh["fallback_to_static_mesh"] is True
+    assert config.rigging is not None
+    assert config.rigging["detect_armature"] is True
+    assert config.shape_key_mapping is not None
+    assert "waist" in config.shape_key_mapping
+    assert config.mesh_deformation is not None
+    assert config.mesh_deformation["mode"] == "rigged_or_shape_key_v1"
+
+
+def test_phase_2g_blender_command_can_be_built() -> None:
+    command = build_blender_command(
+        blender_executable="blender",
+        script_path="synthetic/blender/scripts/render_parametric_body.py",
+        config_path=PHASE_2G_CONFIG_PATH,
+        dry_run=True,
+    )
+
+    assert command[-1] == PHASE_2G_CONFIG_PATH
+    assert format_command(command).endswith("--config synthetic/blender/configs/phase_2g_rigged_mesh_config.example.json")
+
+
+def test_deformation_math_clamps_and_normalizes_values() -> None:
+    assert clamp(-1, 0, 1) == 0
+    assert clamp(2, 0, 1) == 1
+    assert normalize_measurement_to_unit(82, 82, 55, 125) == 0.5
+    assert normalize_measurement_to_unit(500, 82, 55, 125) == 1.0
+
+
+def test_shape_key_targets_are_clamped_between_zero_and_one() -> None:
+    targets = compute_shape_key_targets(
+        {
+            "height_cm": 230,
+            "weight_kg": 200,
+            "chest_cm": 160,
+            "waist_cm": 20,
+            "hip_cm": 150,
+            "shoulder_cm": 80,
+            "body_shape": "athletic",
+        },
+        {
+            "height": ["Height"],
+            "weight": ["Weight"],
+            "chest": ["Chest"],
+            "waist": ["Waist"],
+            "hips": ["Hips"],
+            "shoulders": ["Shoulders"],
+            "muscle": ["Muscle"],
+            "body_fat": ["Fat"],
+        },
+    )
+
+    assert targets["height"] == 1.0
+    assert targets["waist"] == 0.0
+    assert targets["muscle"] == 0.8
+    assert all(0.0 <= value <= 1.0 for value in targets.values())
+
+
+def test_phase_2g_renderer_helpers_are_import_safe_without_bpy() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+
+    assert hasattr(module, "detect_armatures")
+    assert hasattr(module, "detect_shape_keys")
+    assert hasattr(module, "apply_rigged_mesh_deformation")
 
 
 def test_validate_mock_phase_2c_dataset(tmp_path) -> None:

@@ -78,6 +78,17 @@ data/synthetic/phase_2f/labels/*.csv
 !data/synthetic/phase_2f/images/front/.gitkeep
 !data/synthetic/phase_2f/images/side/.gitkeep
 !data/synthetic/phase_2f/labels/.gitkeep
+!/data/synthetic/phase_2g/
+!/data/synthetic/phase_2g/images/
+!/data/synthetic/phase_2g/images/front/
+!/data/synthetic/phase_2g/images/side/
+!/data/synthetic/phase_2g/labels/
+data/synthetic/phase_2g/images/front/*
+data/synthetic/phase_2g/images/side/*
+data/synthetic/phase_2g/labels/*.csv
+!data/synthetic/phase_2g/images/front/.gitkeep
+!data/synthetic/phase_2g/images/side/.gitkeep
+!data/synthetic/phase_2g/labels/.gitkeep
 *.blend
 *.blend1
 *.exr
