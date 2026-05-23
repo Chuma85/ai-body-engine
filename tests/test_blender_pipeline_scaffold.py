@@ -1,6 +1,8 @@
 from dataclasses import replace
 import csv
 import importlib
+import math
+from types import SimpleNamespace
 
 import pytest
 
@@ -302,6 +304,7 @@ def test_phase_2g_rigged_mesh_config_loads_and_validates() -> None:
     assert config.output_dir == "data/synthetic/phase_2g"
     assert config.base_mesh is not None
     assert config.base_mesh["asset_path"] == "assets/body_meshes/base_human_rigged.fbx"
+    assert config.base_mesh["source_front_axis"] == "+X"
     assert config.base_mesh["fallback_to_static_mesh"] is True
     assert config.rigging is not None
     assert config.rigging["detect_armature"] is True
@@ -365,6 +368,47 @@ def test_phase_2g_renderer_helpers_are_import_safe_without_bpy() -> None:
     assert hasattr(module, "detect_armatures")
     assert hasattr(module, "detect_shape_keys")
     assert hasattr(module, "apply_rigged_mesh_deformation")
+
+
+def test_phase_2i_fbx_front_axis_rotates_to_canonical_front() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+
+    assert module.CANONICAL_FRONT_AXIS == "-Y"
+    assert math.isclose(module.horizontal_axis_rotation("+X", module.CANONICAL_FRONT_AXIS), -math.pi / 2)
+    assert math.isclose(module.horizontal_axis_rotation("-Y", module.CANONICAL_FRONT_AXIS), 0.0)
+
+
+def test_phase_2i_camera_transforms_use_true_front_and_side_views() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+
+    front_location, front_rotation = module.camera_transform_for_view("front", (0.0, 0.0, 1.5), 4.0)
+    side_location, side_rotation = module.camera_transform_for_view("side", (0.0, 0.0, 1.5), 4.0)
+
+    assert front_location == (0.0, -4.0, 1.5)
+    assert front_rotation == (math.pi / 2, 0, 0)
+    assert side_location == (4.0, 0.0, 1.5)
+    assert side_rotation == (math.pi / 2, 0, math.pi / 2)
+
+
+def test_phase_2i_orthographic_scale_keeps_full_body_visible_in_portrait_frame() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    bounds = (-0.5, 0.5, -0.2, 0.2, 0.0, 3.0)
+    frame_width, frame_height, frame_depth = module.camera_frame_dimensions(bounds, "front")
+
+    assert frame_width == 1.0
+    assert frame_height == 3.0
+    assert frame_depth == 0.4
+    assert module.orthographic_scale_for_frame(frame_width, frame_height, 768 / 1024, 0.18) == pytest.approx(3.54)
+
+
+def test_phase_2i_cli_overrides_output_and_sample_count() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    config = {"output_dir": "data/synthetic/phase_2g", "sample_count": 5}
+
+    module.apply_cli_overrides(config, SimpleNamespace(output="data/synthetic/phase_2i", num_samples=2))
+
+    assert config["output_dir"] == "data/synthetic/phase_2i"
+    assert config["sample_count"] == 2
 
 
 def test_validate_mock_phase_2c_dataset(tmp_path) -> None:

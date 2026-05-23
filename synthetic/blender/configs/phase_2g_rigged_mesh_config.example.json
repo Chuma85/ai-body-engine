@@ -13,6 +13,7 @@
     "enabled": true,
     "asset_path": "assets/body_meshes/base_human_rigged.fbx",
     "format": "fbx",
+    "source_front_axis": "+X",
     "fallback_to_static_mesh": true,
     "fallback_to_procedural": true,
     "normalize_scale": true,

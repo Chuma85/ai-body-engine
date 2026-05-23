@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import random
@@ -24,6 +25,13 @@ from synthetic.blender.utils.deformation_math import compute_shape_key_targets
 
 GENERATOR_VERSION = "phase_2c_blender_procedural_body_v1"
 BODY_SHAPES = ("slim", "average", "athletic", "curvy", "broad", "plus")
+CANONICAL_FRONT_AXIS = "-Y"
+HORIZONTAL_AXIS_ANGLES = {
+    "+X": 0.0,
+    "+Y": math.pi / 2,
+    "-X": math.pi,
+    "-Y": -math.pi / 2,
+}
 OPTIONAL_METADATA_COLUMNS = [
     "skin_tone_id",
     "pose_variation_degrees",
@@ -78,6 +86,7 @@ def main() -> None:
         return
 
     config = load_config(args.config)
+    apply_cli_overrides(config, args)
     resolved_output_dir = resolve_output_dir(config["output_dir"])
     output_dirs = ensure_output_dirs(resolved_output_dir)
     rng = random.Random(config["random_seed"])
@@ -108,6 +117,9 @@ def main() -> None:
                 "front",
                 (config.get("camera") or {}).get("margin", 0.15),
                 config["camera_focal_length"],
+                config["image_width"],
+                config["image_height"],
+                config["camera_distance"],
             )
         render_view(bpy, front_path, config["image_width"], config["image_height"])
 
@@ -120,6 +132,9 @@ def main() -> None:
                 "side",
                 (config.get("camera") or {}).get("margin", 0.15),
                 config["camera_focal_length"],
+                config["image_width"],
+                config["image_height"],
+                config["camera_distance"],
             )
         render_view(bpy, side_path, config["image_width"], config["image_height"])
 
@@ -172,6 +187,13 @@ def main() -> None:
 def load_config(config_path: str) -> dict:
     with Path(config_path).open("r", encoding="utf-8") as config_file:
         return json.load(config_file)
+
+
+def apply_cli_overrides(config: dict, args: argparse.Namespace) -> None:
+    if args.output:
+        config["output_dir"] = args.output
+    if args.num_samples is not None:
+        config["sample_count"] = args.num_samples
 
 
 def resolve_output_dir(output_dir: str) -> Path:
@@ -332,6 +354,7 @@ def create_body_from_config(bpy, params: dict, config: dict, material) -> dict[s
                 metadata["fallback_used"] = True
 
         if imported_objects:
+            normalize_imported_body_orientation(bpy, imported_objects, base_mesh)
             if base_mesh.get("normalize_scale", True):
                 normalize_objects_height(bpy, imported_objects, _body_dimensions(params)["height"])
             if base_mesh.get("center_on_origin", True):
@@ -636,6 +659,57 @@ def import_mesh_asset(bpy, asset_path: Path, asset_format: str) -> list:
     return imported_objects
 
 
+def normalize_imported_body_orientation(bpy, imported_objects: list, base_mesh: dict) -> None:
+    source_front_axis = base_mesh.get("source_front_axis", CANONICAL_FRONT_AXIS)
+    rotation_z = horizontal_axis_rotation(source_front_axis, CANONICAL_FRONT_AXIS)
+    if abs(rotation_z) < 0.0001:
+        return
+
+    rotate_root_objects_around_world_z(bpy, imported_objects, rotation_z)
+
+
+def horizontal_axis_rotation(source_axis: str, target_axis: str) -> float:
+    source_angle = _horizontal_axis_angle(source_axis)
+    target_angle = _horizontal_axis_angle(target_axis)
+    return _normalize_radians(target_angle - source_angle)
+
+
+def _horizontal_axis_angle(axis: str) -> float:
+    normalized = axis.strip().upper()
+    if normalized not in HORIZONTAL_AXIS_ANGLES:
+        raise ValueError(f"Unsupported horizontal axis: {axis}")
+    return HORIZONTAL_AXIS_ANGLES[normalized]
+
+
+def _normalize_radians(angle: float) -> float:
+    while angle <= -math.pi:
+        angle += math.tau
+    while angle > math.pi:
+        angle -= math.tau
+    return angle
+
+
+def rotate_root_objects_around_world_z(bpy, objects: list, angle: float) -> None:
+    object_set = set(objects)
+    root_objects = [obj for obj in objects if getattr(obj, "parent", None) not in object_set]
+    cos_angle = math.cos(angle)
+    sin_angle = math.sin(angle)
+
+    for obj in root_objects:
+        location = getattr(obj, "location", None)
+        if location is not None:
+            x = location.x
+            y = location.y
+            location.x = x * cos_angle - y * sin_angle
+            location.y = x * sin_angle + y * cos_angle
+
+        rotation_euler = getattr(obj, "rotation_euler", None)
+        if rotation_euler is not None:
+            rotation_euler.z += angle
+
+    bpy.context.view_layer.update()
+
+
 def normalize_imported_mesh(bpy, imported_objects: list, target_height_units: float) -> None:
     normalize_objects_height(bpy, imported_objects, target_height_units)
 
@@ -788,41 +862,66 @@ def create_procedural_body(bpy, params: dict, material, config: dict | None = No
 
 
 def setup_camera(bpy, view: str, camera_distance: float, focal_length: float):
-    if view == "front":
-        location = (0, -camera_distance, 1.45)
-        rotation = (1.5708, 0, 0)
-    elif view == "side":
-        location = (camera_distance, 0, 1.45)
-        rotation = (1.5708, 0, 1.5708)
-    else:
-        raise ValueError(f"Unsupported view: {view}")
-
+    location, rotation = camera_transform_for_view(view, (0, 0, 1.45), camera_distance)
     bpy.ops.object.camera_add(location=location, rotation=rotation)
     camera = bpy.context.object
     camera.data.lens = focal_length
+    camera.data.type = "ORTHO"
+    camera.data.ortho_scale = 3.6
     bpy.context.scene.camera = camera
     return camera
 
 
-def auto_frame_camera_to_objects(bpy, camera, objects: list, view: str, margin: float, focal_length: float) -> None:
+def camera_transform_for_view(
+    view: str,
+    center: tuple[float, float, float],
+    distance: float,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    center_x, center_y, center_z = center
+    if view == "front":
+        return (center_x, center_y - distance, center_z), (math.pi / 2, 0, 0)
+    if view == "side":
+        return (center_x + distance, center_y, center_z), (math.pi / 2, 0, math.pi / 2)
+    raise ValueError(f"Unsupported view: {view}")
+
+
+def camera_frame_dimensions(bounds: tuple[float, float, float, float, float, float], view: str) -> tuple[float, float, float]:
+    min_x, max_x, min_y, max_y, min_z, max_z = bounds
+    height = max(max_z - min_z, 0.1)
+    if view == "front":
+        return max(max_x - min_x, 0.1), height, max(max_y - min_y, 0.1)
+    if view == "side":
+        return max(max_y - min_y, 0.1), height, max(max_x - min_x, 0.1)
+    raise ValueError(f"Unsupported view: {view}")
+
+
+def orthographic_scale_for_frame(frame_width: float, frame_height: float, aspect_ratio: float, margin: float) -> float:
+    return max(frame_height, frame_width / max(aspect_ratio, 0.01)) * (1.0 + margin)
+
+
+def auto_frame_camera_to_objects(
+    bpy,
+    camera,
+    objects: list,
+    view: str,
+    margin: float,
+    focal_length: float,
+    image_width: int | None = None,
+    image_height: int | None = None,
+    minimum_distance: float = 2.5,
+) -> None:
     min_x, max_x, min_y, max_y, min_z, max_z = get_object_bounds_world(objects)
     center_x = (min_x + max_x) / 2
     center_y = (min_y + max_y) / 2
     center_z = (min_z + max_z) / 2
-    height = max(max_z - min_z, 0.1)
-    width = max(max_x - min_x, max_y - min_y, 0.1)
-    distance = max(height * (1.45 + margin), width * (2.0 + margin), 2.5)
-
-    if view == "front":
-        camera.location = (center_x, center_y - distance, center_z)
-        camera.rotation_euler = (1.5708, 0, 0)
-    elif view == "side":
-        camera.location = (center_x + distance, center_y, center_z)
-        camera.rotation_euler = (1.5708, 0, 1.5708)
-    else:
-        raise ValueError(f"Unsupported view: {view}")
+    frame_width, frame_height, frame_depth = camera_frame_dimensions((min_x, max_x, min_y, max_y, min_z, max_z), view)
+    aspect_ratio = (image_width or 1) / max(image_height or 1, 1)
+    distance = max(minimum_distance, frame_depth * 3.0 + 1.0)
+    camera.location, camera.rotation_euler = camera_transform_for_view(view, (center_x, center_y, center_z), distance)
 
     camera.data.lens = focal_length
+    camera.data.type = "ORTHO"
+    camera.data.ortho_scale = orthographic_scale_for_frame(frame_width, frame_height, aspect_ratio, margin)
     bpy.context.scene.camera = camera
     bpy.context.view_layer.update()
 
@@ -933,6 +1032,8 @@ def _degrees_to_radians(degrees: float) -> float:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render synthetic parametric body dataset with Blender.")
     parser.add_argument("--config", required=True)
+    parser.add_argument("--output")
+    parser.add_argument("--num-samples", type=int)
     argv = sys.argv
     if "--" in argv:
         argv = argv[argv.index("--") + 1 :]
