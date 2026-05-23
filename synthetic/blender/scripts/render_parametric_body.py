@@ -16,6 +16,10 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import random
 import sys
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from synthetic.blender.utils.deformation_math import compute_shape_key_targets
 
 GENERATOR_VERSION = "phase_2c_blender_procedural_body_v1"
