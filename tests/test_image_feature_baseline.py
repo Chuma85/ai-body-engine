@@ -1,0 +1,175 @@
+import csv
+import json
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+import pytest
+
+from synthetic.blender.scripts.render_parametric_body import LABEL_COLUMNS
+from synthetic.build_dataset_manifest import build_dataset_manifest
+from training.features.image_silhouette_features import (
+    create_foreground_mask,
+    extract_front_side_features,
+    extract_image_features,
+    feature_vector,
+    foreground_bounding_box,
+    get_feature_names,
+)
+from training.train_image_feature_baseline import main, train_image_feature_baseline
+
+
+def test_foreground_mask_creation_on_tiny_image() -> None:
+    grayscale = np.full((10, 10), 50, dtype=np.float32)
+    grayscale[3:7, 4:8] = 210
+
+    mask = create_foreground_mask(grayscale)
+
+    assert mask.sum() == 16
+    assert mask[3, 4] is np.True_ or bool(mask[3, 4]) is True
+    assert bool(mask[0, 0]) is False
+
+
+def test_bounding_box_feature_extraction(tmp_path) -> None:
+    image_path = tmp_path / "body.png"
+    _write_rect_image(image_path, rect=(4, 3, 7, 6), size=(10, 10))
+
+    features = extract_image_features(image_path, "front")
+
+    assert foreground_bounding_box(create_foreground_mask(np.asarray(Image.open(image_path).convert("L"), dtype=np.float32))) == (4, 3, 7, 6)
+    assert features["front_bbox_width_px"] == 4.0
+    assert features["front_bbox_height_px"] == 4.0
+    assert features["front_foreground_area_ratio"] == 0.16
+
+
+def test_feature_vector_has_stable_names_and_order(tmp_path) -> None:
+    front_path = tmp_path / "front.png"
+    side_path = tmp_path / "side.png"
+    _write_rect_image(front_path, rect=(3, 2, 8, 9), size=(12, 12))
+    _write_rect_image(side_path, rect=(5, 2, 7, 9), size=(12, 12))
+
+    names = get_feature_names()
+    features = extract_front_side_features(front_path, side_path)
+    vector = feature_vector(features, names)
+
+    assert names[:4] == [
+        "front_image_width_px",
+        "front_image_height_px",
+        "front_foreground_area_ratio",
+        "front_bbox_width_px",
+    ]
+    assert names[-2:] == ["front_to_side_bbox_width_ratio", "front_to_side_area_ratio"]
+    assert len(vector) == len(names)
+    assert vector == feature_vector(features, names)
+
+
+def test_image_feature_training_runs_and_creates_metrics(tmp_path, monkeypatch) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+    output_dir = tmp_path / "artifacts" / "phase_2n"
+    monkeypatch.chdir(tmp_path)
+
+    result = train_image_feature_baseline(dataset_root, output_dir)
+
+    assert Path(result["metrics_path"]).exists()
+    assert Path(result["model_path"]).exists()
+    metrics = json.loads(Path(result["metrics_path"]).read_text(encoding="utf-8"))
+    assert metrics["model_type"] == "image_silhouette_ridge_regressor"
+    assert metrics["sample_counts"] == {"train": 16, "val": 2, "test": 2}
+    assert "front_bbox_width_ratio" in metrics["feature_names"]
+    assert "overall_mae" in metrics["test"]
+
+
+def test_image_feature_training_cli_creates_metrics_file(tmp_path, monkeypatch) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+    output_dir = tmp_path / "artifacts" / "phase_2n_cli"
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = main(["--dataset", str(dataset_root), "--output", str(output_dir)])
+
+    assert exit_code == 0
+    assert (output_dir / "metrics.json").exists()
+
+
+def test_unreadable_image_raises_helpful_error(tmp_path, monkeypatch) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+    monkeypatch.chdir(tmp_path)
+    first_train_front = _first_manifest_path_for_split(dataset_root, "train", "front_image_path")
+    Path(first_train_front).write_bytes(b"not an image")
+
+    with pytest.raises(ValueError, match="Could not read image file"):
+        train_image_feature_baseline(dataset_root, tmp_path / "artifacts" / "bad_image")
+
+
+def test_missing_image_raises_helpful_error(tmp_path, monkeypatch) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+    monkeypatch.chdir(tmp_path)
+    first_train_front = _first_manifest_path_for_split(dataset_root, "train", "front_image_path")
+    Path(first_train_front).unlink()
+
+    with pytest.raises(FileNotFoundError, match="Missing front image"):
+        train_image_feature_baseline(dataset_root, tmp_path / "artifacts" / "missing_image")
+
+
+def _first_manifest_path_for_split(dataset_root: Path, split: str, path_column: str) -> str:
+    with (dataset_root / "manifest.csv").open("r", newline="", encoding="utf-8") as manifest_file:
+        for row in csv.DictReader(manifest_file):
+            if row["dataset_split"] == split:
+                return row[path_column]
+    raise AssertionError(f"No row found for split {split}")
+
+
+def _write_dataset(tmp_path: Path, count: int) -> Path:
+    dataset_root = tmp_path / "data" / "synthetic" / "phase_image_test"
+    front_dir = dataset_root / "images" / "front"
+    side_dir = dataset_root / "images" / "side"
+    labels_dir = dataset_root / "labels"
+    front_dir.mkdir(parents=True)
+    side_dir.mkdir(parents=True)
+    labels_dir.mkdir(parents=True)
+
+    body_shapes = ["average", "athletic", "curvy", "broad"]
+    with (labels_dir / "labels.csv").open("w", newline="", encoding="utf-8") as labels_file:
+        writer = csv.DictWriter(labels_file, fieldnames=LABEL_COLUMNS)
+        writer.writeheader()
+        for index in range(1, count + 1):
+            sample_id = f"sample_{index:06d}"
+            front_width = 16 + (index % 8)
+            side_width = 8 + (index % 5)
+            _write_rect_image(front_dir / f"{sample_id}_front.png", rect=(20, 10, 20 + front_width, 54), size=(64, 64))
+            _write_rect_image(side_dir / f"{sample_id}_side.png", rect=(24, 10, 24 + side_width, 54), size=(64, 64))
+            row = {column: "" for column in LABEL_COLUMNS}
+            row.update(
+                {
+                    "sample_id": sample_id,
+                    "front_image_path": (front_dir / f"{sample_id}_front.png").as_posix(),
+                    "side_image_path": (side_dir / f"{sample_id}_side.png").as_posix(),
+                    "height_cm": str(160 + index),
+                    "weight_kg": str(55 + index),
+                    "chest_cm": str(80 + front_width),
+                    "waist_cm": str(70 + front_width),
+                    "hip_cm": str(85 + front_width),
+                    "shoulder_cm": str(38 + (index % 5)),
+                    "inseam_cm": str(70 + (index % 8)),
+                    "sleeve_cm": str(55 + (index % 7)),
+                    "neck_cm": str(32 + (index % 4)),
+                    "thigh_cm": str(45 + side_width),
+                    "calf_cm": str(32 + (index % 6)),
+                    "body_shape": body_shapes[index % len(body_shapes)],
+                    "generator_version": "test",
+                }
+            )
+            writer.writerow(row)
+
+    result = build_dataset_manifest(dataset_root)
+    assert result["valid"] is True
+    return dataset_root
+
+
+def _write_rect_image(path: Path, rect: tuple[int, int, int, int], size: tuple[int, int]) -> None:
+    image = Image.new("RGB", size, (50, 50, 50))
+    pixels = image.load()
+    x_min, y_min, x_max, y_max = rect
+    for y in range(y_min, y_max + 1):
+        for x in range(x_min, x_max + 1):
+            pixels[x, y] = (220, 220, 220)
+    image.save(path)
