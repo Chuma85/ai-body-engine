@@ -17,6 +17,7 @@ pytest-cache-files-*/
 !/data/synthetic/phase_2a/labels/
 /checkpoints/
 /logs/
+/artifacts/
 *.pt
 *.pth
 *.onnx
