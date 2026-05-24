@@ -17,6 +17,7 @@ from training.experiments.run_image_feature_experiment import (
     prediction_fieldnames,
     run_image_feature_experiment,
 )
+from training.experiments.compare_image_feature_models import compare_image_feature_models
 
 
 def test_prediction_rows_contain_true_pred_and_error_columns() -> None:
@@ -139,11 +140,50 @@ def test_config_contains_dataset_targets_and_model_settings(tmp_path, monkeypatc
     config = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
     assert config["dataset"] == str(dataset_root)
     assert config["target_columns"] == TARGET_COLUMNS
+    assert config["feature_count"] > 0
     assert config["feature_extractor"]["name"] == "image_silhouette_features"
     assert config["feature_extractor"]["version"] == "phase_2p"
+    assert config["model"]["type"] == "ridge"
+    assert config["model"]["artifact_type"] == MODEL_TYPE
     assert config["model"]["regression_method"] == "ridge_regression"
-    assert config["model"]["ridge_alpha"] == 7.5
+    assert config["model"]["hyperparameters"]["ridge_alpha"] == 7.5
     assert "created_at_utc" in config
+
+
+def test_model_selection_supports_mean_and_ridge(tmp_path, monkeypatch) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+    output_dir = tmp_path / "artifacts" / "experiments" / "phase_2t_mean"
+    monkeypatch.chdir(tmp_path)
+
+    result = run_image_feature_experiment(dataset_root, output_dir, model_type="mean")
+
+    config = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
+    assert config["model"]["type"] == "mean"
+    assert config["model"]["hyperparameters"] == {}
+    assert result["metrics"]["model_family"] == "mean"
+    assert result["metrics"]["model_type"] == "image_feature_mean_regressor"
+
+
+def test_model_selection_supports_knn(tmp_path, monkeypatch) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+    output_dir = tmp_path / "artifacts" / "experiments" / "phase_2t_knn"
+    monkeypatch.chdir(tmp_path)
+
+    result = run_image_feature_experiment(dataset_root, output_dir, model_type="knn", knn_k=3)
+
+    config = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
+    model = json.loads((output_dir / "model.json").read_text(encoding="utf-8"))
+    assert config["model"]["type"] == "knn"
+    assert config["model"]["hyperparameters"]["k"] == 3
+    assert model["hyperparameters"]["k"] == 3
+    assert result["metrics"]["model_family"] == "knn"
+
+
+def test_invalid_model_type_raises_clear_error(tmp_path) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+
+    with pytest.raises(ValueError, match="Unknown model type"):
+        run_image_feature_experiment(dataset_root, tmp_path / "artifacts" / "bad_model", model_type="tree")
 
 
 def test_experiment_cli_creates_outputs(tmp_path, monkeypatch) -> None:
@@ -163,6 +203,31 @@ def test_missing_dataset_raises_helpful_error(tmp_path) -> None:
 
     with pytest.raises(FileNotFoundError, match="Dataset root does not exist"):
         run_image_feature_experiment(missing_dataset, tmp_path / "artifacts" / "missing")
+
+
+def test_comparison_runner_creates_model_subdirs_summary_and_report(tmp_path, monkeypatch) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+    output_dir = tmp_path / "artifacts" / "experiments" / "phase_2t_compare"
+    monkeypatch.chdir(tmp_path)
+
+    result = compare_image_feature_models(dataset_root, output_dir, model_types=["mean", "ridge"])
+
+    assert (output_dir / "mean" / "metrics.json").exists()
+    assert (output_dir / "ridge" / "metrics.json").exists()
+    assert (output_dir / "summary.json").exists()
+    assert (output_dir / "report.md").exists()
+    assert Path(result["summary_path"]).exists()
+    assert Path(result["report_path"]).exists()
+    assert result["summary"]["model_types"] == ["mean", "ridge"]
+    assert result["summary"]["best_model_overall"]["model_type"] in {"mean", "ridge"}
+    assert "height_cm" in result["summary"]["best_model_per_target"]
+
+
+def test_comparison_runner_invalid_model_raises_clear_error(tmp_path) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+
+    with pytest.raises(ValueError, match="Unknown model type"):
+        compare_image_feature_models(dataset_root, tmp_path / "artifacts" / "bad_compare", model_types=["ridge", "tree"])
 
 
 def _write_dataset(tmp_path: Path, count: int) -> Path:

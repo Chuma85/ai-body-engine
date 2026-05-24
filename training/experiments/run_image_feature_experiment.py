@@ -20,11 +20,8 @@ from training.train_baseline_measurements import (
     format_metrics_report,
 )
 from training.train_image_feature_baseline import (
-    MODEL_TYPE,
     _target_matrix,
-    evaluate_feature_regressor,
     extract_sample_feature_matrix,
-    predict_feature_regressor,
     train_ridge_regressor,
 )
 
@@ -37,19 +34,26 @@ PREDICTION_FILENAMES = {
     "test": "predictions_test.csv",
 }
 METRICS_FILENAME = "metrics.json"
+MODEL_TYPE = "image_silhouette_ridge_regressor"
 FEATURE_EXTRACTOR_NAME = "image_silhouette_features"
 FEATURE_EXTRACTOR_VERSION = "phase_2p"
-EXPERIMENT_RUNNER_VERSION = "phase_2s"
+EXPERIMENT_RUNNER_VERSION = "phase_2t"
+SUPPORTED_MODEL_TYPES = ("mean", "ridge", "knn")
+DEFAULT_MODEL_TYPE = "ridge"
+DEFAULT_KNN_K = 5
 
 
 def run_image_feature_experiment(
     dataset_root: str | Path,
     output_dir: str | Path,
+    model_type: str = DEFAULT_MODEL_TYPE,
     ridge_alpha: float = 10.0,
+    knn_k: int = DEFAULT_KNN_K,
 ) -> dict[str, Any]:
     dataset_path = Path(dataset_root)
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset root does not exist: {dataset_path}")
+    _validate_model_type(model_type)
 
     datasets = {
         "train": SyntheticBodyDataset(dataset_path, split="train"),
@@ -69,15 +73,17 @@ def run_image_feature_experiment(
         for split, samples in samples_by_split.items()
     }
 
-    model = train_ridge_regressor(
+    model = train_image_feature_model(
+        model_type,
         features_by_split["train"],
         targets_by_split["train"],
         feature_names,
         TARGET_COLUMNS,
-        ridge_alpha,
+        ridge_alpha=ridge_alpha,
+        knn_k=knn_k,
     )
     predictions_by_split = {
-        split: predict_feature_regressor(model, feature_matrix)
+        split: predict_image_feature_model(model, feature_matrix)
         for split, feature_matrix in features_by_split.items()
     }
     prediction_rows_by_split = {
@@ -102,7 +108,7 @@ def run_image_feature_experiment(
         split: calculate_per_target_errors(rows, TARGET_COLUMNS)
         for split, rows in prediction_rows_by_split.items()
     }
-    config = build_config(dataset_path, TARGET_COLUMNS, ridge_alpha)
+    config = build_config(dataset_path, TARGET_COLUMNS, len(feature_names), model, model_type, ridge_alpha, knn_k)
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -147,7 +153,8 @@ def build_metrics(
     feature_count: int,
 ) -> dict[str, Any]:
     metrics: dict[str, Any] = {
-        "model_type": MODEL_TYPE,
+        "model_type": model["model_type"],
+        "model_family": model["model_family"],
         "target_columns": target_columns,
         "feature_count": feature_count,
         "sample_counts": {
@@ -156,13 +163,132 @@ def build_metrics(
         },
     }
     for split in ("train", "val", "test"):
-        metrics[split] = evaluate_feature_regressor(
+        metrics[split] = evaluate_image_feature_model(
             model,
             features_by_split[split],
             samples_by_split[split],
             target_columns,
         )
     return metrics
+
+
+def train_image_feature_model(
+    model_type: str,
+    feature_matrix: np.ndarray,
+    target_matrix: np.ndarray,
+    feature_names: list[str],
+    target_columns: list[str],
+    ridge_alpha: float = 10.0,
+    knn_k: int = DEFAULT_KNN_K,
+) -> dict[str, Any]:
+    _validate_model_type(model_type)
+    if model_type == "mean":
+        return train_mean_regressor(target_matrix, target_columns)
+    if model_type == "ridge":
+        model = train_ridge_regressor(feature_matrix, target_matrix, feature_names, target_columns, ridge_alpha)
+        model["model_family"] = "ridge"
+        model["hyperparameters"] = {"ridge_alpha": ridge_alpha}
+        return model
+    if model_type == "knn":
+        return train_knn_regressor(feature_matrix, target_matrix, feature_names, target_columns, knn_k)
+    raise AssertionError(f"Unhandled model type: {model_type}")
+
+
+def train_mean_regressor(target_matrix: np.ndarray, target_columns: list[str]) -> dict[str, Any]:
+    if target_matrix.shape[0] < 1:
+        raise ValueError("Need at least one training row for mean image-feature baseline.")
+    target_means = target_matrix.mean(axis=0)
+    return {
+        "model_type": "image_feature_mean_regressor",
+        "model_family": "mean",
+        "target_columns": target_columns,
+        "hyperparameters": {},
+        "target_means": target_means.tolist(),
+    }
+
+
+def train_knn_regressor(
+    feature_matrix: np.ndarray,
+    target_matrix: np.ndarray,
+    feature_names: list[str],
+    target_columns: list[str],
+    knn_k: int,
+) -> dict[str, Any]:
+    if feature_matrix.shape[0] < 1:
+        raise ValueError("Need at least one training row for KNN image-feature baseline.")
+    if knn_k < 1:
+        raise ValueError("knn_k must be at least 1.")
+
+    feature_means = feature_matrix.mean(axis=0)
+    feature_stds = feature_matrix.std(axis=0)
+    feature_stds = np.where(feature_stds < 1e-8, 1.0, feature_stds)
+    standardized = (feature_matrix - feature_means) / feature_stds
+    effective_k = min(knn_k, feature_matrix.shape[0])
+    return {
+        "model_type": "image_feature_knn_regressor",
+        "model_family": "knn",
+        "feature_names": feature_names,
+        "target_columns": target_columns,
+        "hyperparameters": {"k": effective_k},
+        "feature_means": feature_means.tolist(),
+        "feature_stds": feature_stds.tolist(),
+        "train_features": standardized.tolist(),
+        "train_targets": target_matrix.tolist(),
+    }
+
+
+def predict_image_feature_model(model: dict[str, Any], feature_matrix: np.ndarray) -> np.ndarray:
+    model_family = model["model_family"]
+    if model_family == "mean":
+        target_means = np.asarray(model["target_means"], dtype=np.float64)
+        return np.tile(target_means, (feature_matrix.shape[0], 1))
+    if model_family == "ridge":
+        feature_means = np.asarray(model["feature_means"], dtype=np.float64)
+        feature_stds = np.asarray(model["feature_stds"], dtype=np.float64)
+        intercepts = np.asarray(model["intercepts"], dtype=np.float64)
+        coefficients = np.asarray(model["coefficients"], dtype=np.float64)
+        standardized = (feature_matrix - feature_means) / feature_stds
+        return standardized @ coefficients + intercepts
+    if model_family == "knn":
+        return predict_knn_regressor(model, feature_matrix)
+    raise ValueError(f"Unknown trained model family '{model_family}'.")
+
+
+def predict_knn_regressor(model: dict[str, Any], feature_matrix: np.ndarray) -> np.ndarray:
+    feature_means = np.asarray(model["feature_means"], dtype=np.float64)
+    feature_stds = np.asarray(model["feature_stds"], dtype=np.float64)
+    train_features = np.asarray(model["train_features"], dtype=np.float64)
+    train_targets = np.asarray(model["train_targets"], dtype=np.float64)
+    k = int(model["hyperparameters"]["k"])
+    standardized = (feature_matrix - feature_means) / feature_stds
+    predictions = []
+    for row in standardized:
+        distances = np.linalg.norm(train_features - row, axis=1)
+        nearest_indices = np.argsort(distances)[:k]
+        predictions.append(train_targets[nearest_indices].mean(axis=0))
+    return np.asarray(predictions, dtype=np.float64)
+
+
+def evaluate_image_feature_model(
+    model: dict[str, Any],
+    feature_matrix: np.ndarray,
+    samples: list[dict[str, Any]],
+    target_columns: list[str],
+) -> dict[str, Any]:
+    if not samples:
+        raise ValueError("Cannot evaluate image feature experiment with zero samples.")
+
+    predictions = predict_image_feature_model(model, feature_matrix)
+    targets = _target_matrix(samples, target_columns)
+    absolute_errors = np.abs(predictions - targets)
+    mae_by_target = {
+        target: float(absolute_errors[:, index].mean())
+        for index, target in enumerate(target_columns)
+    }
+    return {
+        "overall_mae": _mean(list(mae_by_target.values())),
+        "mae_by_target": mae_by_target,
+    }
 
 
 def build_prediction_rows(
@@ -206,18 +332,28 @@ def calculate_per_target_errors(
     return errors
 
 
-def build_config(dataset_root: Path, target_columns: list[str], ridge_alpha: float) -> dict[str, Any]:
+def build_config(
+    dataset_root: Path,
+    target_columns: list[str],
+    feature_count: int,
+    model: dict[str, Any],
+    model_type: str,
+    ridge_alpha: float,
+    knn_k: int,
+) -> dict[str, Any]:
     return {
         "dataset": str(dataset_root),
         "target_columns": target_columns,
+        "feature_count": feature_count,
         "feature_extractor": {
             "name": FEATURE_EXTRACTOR_NAME,
             "version": FEATURE_EXTRACTOR_VERSION,
         },
         "model": {
-            "type": MODEL_TYPE,
-            "regression_method": "ridge_regression",
-            "ridge_alpha": ridge_alpha,
+            "type": model_type,
+            "artifact_type": model["model_type"],
+            "regression_method": _regression_method(model_type),
+            "hyperparameters": _model_hyperparameters(model_type, ridge_alpha, knn_k),
         },
         "experiment_runner_version": EXPERIMENT_RUNNER_VERSION,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -252,14 +388,45 @@ def _csv_value(value: Any) -> str:
     return str(value)
 
 
+def _validate_model_type(model_type: str) -> None:
+    if model_type not in SUPPORTED_MODEL_TYPES:
+        raise ValueError(
+            f"Unknown model type '{model_type}'. Expected one of: {', '.join(SUPPORTED_MODEL_TYPES)}."
+        )
+
+
+def _regression_method(model_type: str) -> str:
+    return {
+        "mean": "target_mean",
+        "ridge": "ridge_regression",
+        "knn": "k_nearest_neighbors",
+    }[model_type]
+
+
+def _model_hyperparameters(model_type: str, ridge_alpha: float, knn_k: int) -> dict[str, Any]:
+    if model_type == "ridge":
+        return {"ridge_alpha": ridge_alpha}
+    if model_type == "knn":
+        return {"k": knn_k}
+    return {}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run a repeatable image-feature measurement experiment.")
     parser.add_argument("--dataset", required=True, help="Synthetic dataset root containing manifest.csv.")
     parser.add_argument("--output", required=True, help="Experiment output directory.")
+    parser.add_argument("--model", default=DEFAULT_MODEL_TYPE, choices=SUPPORTED_MODEL_TYPES)
     parser.add_argument("--ridge-alpha", type=float, default=10.0)
+    parser.add_argument("--knn-k", type=int, default=DEFAULT_KNN_K)
     args = parser.parse_args(argv)
 
-    result = run_image_feature_experiment(args.dataset, args.output, ridge_alpha=args.ridge_alpha)
+    result = run_image_feature_experiment(
+        args.dataset,
+        args.output,
+        model_type=args.model,
+        ridge_alpha=args.ridge_alpha,
+        knn_k=args.knn_k,
+    )
     print(format_metrics_report(result))
     print(f"Config artifact: {result['config_path']}")
     print(f"Feature names artifact: {result['feature_names_path']}")
