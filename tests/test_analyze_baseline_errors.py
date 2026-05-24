@@ -45,6 +45,22 @@ def test_calculates_improvement_and_regression(tmp_path) -> None:
     assert improvement["top_regressed_targets"][0]["target"] == "waist_cm"
 
 
+def test_pairwise_improvement_uses_first_and_last_run_when_three_runs_are_provided(tmp_path) -> None:
+    run_a = load_metrics_run(_write_run(tmp_path, "phase_2m", overall_test=10.0, chest_test=8.0, waist_test=12.0))
+    run_b = load_metrics_run(_write_run(tmp_path, "phase_2n", overall_test=7.0, chest_test=6.0, waist_test=14.0))
+    run_c = load_metrics_run(_write_run(tmp_path, "phase_2p", overall_test=6.0, chest_test=5.0, waist_test=11.0))
+
+    improvement = build_comparison_summary([run_a, run_b, run_c])["pairwise_test_improvement"]
+
+    assert improvement["baseline_run"] == "phase_2m"
+    assert improvement["candidate_run"] == "phase_2p"
+    assert improvement["overall_mae_delta"] == 4.0
+    latest = build_comparison_summary([run_a, run_b, run_c])["latest_vs_previous_test_improvement"]
+    assert latest["baseline_run"] == "phase_2n"
+    assert latest["candidate_run"] == "phase_2p"
+    assert latest["overall_mae_delta"] == 1.0
+
+
 def test_writes_summary_json_and_markdown_report(tmp_path) -> None:
     run_a = _write_run(tmp_path, "phase_2m", overall_test=10.0, chest_test=8.0, waist_test=12.0)
     run_b = _write_run(tmp_path, "phase_2n", overall_test=7.0, chest_test=6.0, waist_test=14.0)

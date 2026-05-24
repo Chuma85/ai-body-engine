@@ -12,6 +12,7 @@ from training.features.image_silhouette_features import (
     create_foreground_mask,
     extract_front_side_features,
     extract_image_features,
+    extract_mask_features,
     feature_vector,
     foreground_bounding_box,
     get_feature_names,
@@ -59,8 +60,38 @@ def test_feature_vector_has_stable_names_and_order(tmp_path) -> None:
         "front_bbox_width_px",
     ]
     assert names[-2:] == ["front_to_side_bbox_width_ratio", "front_to_side_area_ratio"]
+    assert "front_body_top_y_ratio" in names
+    assert "front_shoulder_to_waist_width_ratio" in names
+    assert "front_thigh_to_height_ratio" in names
+    assert "side_hip_center_x_ratio" in names
+    assert "front_to_side_bbox_height_ratio" in names
     assert len(vector) == len(names)
     assert vector == feature_vector(features, names)
+
+
+def test_tiny_mask_profile_features_are_deterministic() -> None:
+    mask = np.zeros((100, 50), dtype=bool)
+    mask[10:91, 20:31] = True
+    mask[24:27, 15:36] = True
+    mask[48:51, 18:33] = True
+    mask[74:77, 21:30] = True
+
+    features = extract_mask_features(mask, "front")
+
+    assert features["front_body_top_y_ratio"] == 0.10
+    assert features["front_body_bottom_y_ratio"] == 0.90
+    assert features["front_shoulder_width_ratio"] == 21 / 50
+    assert features["front_waist_width_ratio"] == 15 / 50
+    assert features["front_thigh_width_ratio"] == 11 / 50
+    assert features["front_shoulder_to_waist_width_ratio"] == pytest.approx((21 / 50) / (15 / 50))
+    assert features["front_thigh_to_height_ratio"] == pytest.approx((11 / 50) / (81 / 100))
+
+
+def test_empty_foreground_mask_raises_clear_error() -> None:
+    mask = np.zeros((10, 10), dtype=bool)
+
+    with pytest.raises(ValueError, match="Foreground mask is empty"):
+        extract_mask_features(mask, "front")
 
 
 def test_image_feature_training_runs_and_creates_metrics(tmp_path, monkeypatch) -> None:
@@ -76,6 +107,7 @@ def test_image_feature_training_runs_and_creates_metrics(tmp_path, monkeypatch) 
     assert metrics["model_type"] == "image_silhouette_ridge_regressor"
     assert metrics["sample_counts"] == {"train": 16, "val": 2, "test": 2}
     assert "front_bbox_width_ratio" in metrics["feature_names"]
+    assert "front_arm_span_to_torso_ratio" in metrics["feature_names"]
     assert "overall_mae" in metrics["test"]
 
 

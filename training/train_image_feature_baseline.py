@@ -29,7 +29,7 @@ MODEL_TYPE = "image_silhouette_ridge_regressor"
 def train_image_feature_baseline(
     dataset_root: str | Path,
     output_dir: str | Path,
-    ridge_alpha: float = 1.0,
+    ridge_alpha: float = 10.0,
 ) -> dict[str, Any]:
     train_dataset = SyntheticBodyDataset(dataset_root, split="train")
     val_dataset = SyntheticBodyDataset(dataset_root, split="val")
@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Train a lightweight image-feature measurement baseline.")
     parser.add_argument("--dataset", required=True, help="Synthetic dataset root containing manifest.csv.")
     parser.add_argument("--output", required=True, help="Directory for model.json and metrics.json artifacts.")
-    parser.add_argument("--ridge-alpha", type=float, default=1.0)
+    parser.add_argument("--ridge-alpha", type=float, default=10.0)
     args = parser.parse_args(argv)
 
     result = train_image_feature_baseline(args.dataset, args.output, ridge_alpha=args.ridge_alpha)

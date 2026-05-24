@@ -79,6 +79,7 @@ def build_comparison_summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "best_run_per_target": best_run_per_target,
         "worst_targets": worst_targets,
         "pairwise_test_improvement": improvement,
+        "latest_vs_previous_test_improvement": _pairwise_improvement_between(runs[-2], runs[-1], target_columns, split="test") if len(runs) >= 3 else improvement,
         "recommendations": _recommendations(worst_targets, improvement),
     }
 
@@ -142,6 +143,33 @@ def format_markdown_report(summary: dict[str, Any]) -> str:
         )
     else:
         lines.append("No improved targets available.")
+
+    latest_vs_previous = summary.get("latest_vs_previous_test_improvement", {})
+    if latest_vs_previous and latest_vs_previous != improvement:
+        lines.extend(
+            [
+                "",
+                "## Latest Run vs Previous Run",
+                "",
+                f"{latest_vs_previous['candidate_run']} test MAE delta versus {latest_vs_previous['baseline_run']}: {_format_float(latest_vs_previous['overall_mae_delta'])}",
+                "",
+            ]
+        )
+        if latest_vs_previous.get("top_regressed_targets"):
+            lines.append(
+                _markdown_table(
+                    ["Regressed Target", "Previous", "Latest", "MAE Delta"],
+                    [
+                        [
+                            row["target"],
+                            _format_float(row["baseline_mae"]),
+                            _format_float(row["candidate_mae"]),
+                            _format_float(row["mae_delta"]),
+                        ]
+                        for row in latest_vs_previous["top_regressed_targets"][:5]
+                    ],
+                )
+            )
 
     lines.extend(
         [
@@ -218,8 +246,15 @@ def _pairwise_improvement(
     target_columns: list[str],
     split: str,
 ) -> dict[str, Any]:
-    baseline = runs[0]
-    candidate = runs[1]
+    return _pairwise_improvement_between(runs[0], runs[-1], target_columns, split)
+
+
+def _pairwise_improvement_between(
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+    target_columns: list[str],
+    split: str,
+) -> dict[str, Any]:
     baseline_name = baseline["run_name"]
     candidate_name = candidate["run_name"]
     baseline_overall = float(baseline["metrics"][split]["overall_mae"])
@@ -305,6 +340,13 @@ def main(argv: list[str] | None = None) -> int:
             "Test overall MAE delta "
             f"({improvement['baseline_run']} - {improvement['candidate_run']}): "
             f"{improvement['overall_mae_delta']:.4f}"
+        )
+    latest = result["summary"].get("latest_vs_previous_test_improvement", {})
+    if latest and latest != improvement:
+        print(
+            "Latest vs previous test MAE delta "
+            f"({latest['baseline_run']} - {latest['candidate_run']}): "
+            f"{latest['overall_mae_delta']:.4f}"
         )
     return 0
 
