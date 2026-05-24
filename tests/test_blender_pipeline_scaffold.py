@@ -2,6 +2,7 @@ from dataclasses import replace
 import csv
 import importlib
 import math
+import random
 from types import SimpleNamespace
 
 import pytest
@@ -313,6 +314,61 @@ def test_phase_2g_rigged_mesh_config_loads_and_validates() -> None:
     assert "waist" in config.shape_key_mapping
     assert config.mesh_deformation is not None
     assert config.mesh_deformation["mode"] == "rigged_or_shape_key_v1"
+    assert config.variation_controls is not None
+    assert config.variation_controls["enabled"] is False
+    assert "slim" in config.variation_controls["body_shape_profiles"]
+
+
+def test_variation_controls_are_backwards_compatible_when_disabled() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    base_ranges = {"height_cm": [150, 205], "weight_kg": [45, 130]}
+    config = {
+        "body_parameter_ranges": base_ranges,
+        "variation_controls": {
+            "enabled": False,
+            "profile_range_overrides_enabled": True,
+            "body_shape_profiles": {
+                "slim": {"body_parameter_ranges": {"weight_kg": [45, 75]}},
+            },
+        },
+    }
+
+    assert module.ranges_for_body_shape(base_ranges, "slim", config) == base_ranges
+
+
+def test_variation_controls_can_apply_profile_ranges_when_enabled() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    base_ranges = {"height_cm": [150, 205], "weight_kg": [45, 130]}
+    config = {
+        "body_parameter_ranges": base_ranges,
+        "variation_controls": {
+            "enabled": True,
+            "profile_range_overrides_enabled": True,
+            "body_shape_profiles": {
+                "slim": {"body_parameter_ranges": {"weight_kg": [45, 75]}},
+            },
+        },
+    }
+
+    ranges = module.ranges_for_body_shape(base_ranges, "slim", config)
+
+    assert ranges["height_cm"] == [150, 205]
+    assert ranges["weight_kg"] == [45, 75]
+    assert base_ranges["weight_kg"] == [45, 130]
+
+
+def test_variation_controls_select_configured_profiles_when_enabled() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    config = {
+        "variation_controls": {
+            "enabled": True,
+            "body_shape_profiles": {
+                "slim": {},
+            },
+        },
+    }
+
+    assert module.select_body_shape(random.Random(1), config) == "slim"
 
 
 def test_phase_2g_blender_command_can_be_built() -> None:

@@ -44,6 +44,7 @@ class RenderConfig:
     camera: dict[str, Any] | None = None
     rigging: dict[str, Any] | None = None
     shape_key_mapping: dict[str, list[str]] | None = None
+    variation_controls: dict[str, Any] | None = None
 
 
 def load_render_config(path: str) -> RenderConfig:

@@ -243,7 +243,8 @@ def ensure_output_dirs(output_dir: str | Path) -> dict[str, Path]:
 def generate_body_parameters(index: int, rng: random.Random, config: dict) -> dict:
     ranges = config["body_parameter_ranges"]
     anatomy = config.get("anatomy", {})
-    body_shape = rng.choice(BODY_SHAPES)
+    body_shape = select_body_shape(rng, config)
+    ranges = ranges_for_body_shape(ranges, body_shape, config)
     skin_tones = config.get("materials", {}).get("skin_tones") or [[0.75, 0.55, 0.42, 1.0]]
     skin_tone_id = rng.randrange(len(skin_tones))
     pose_limit = anatomy.get("pose_variation_degrees", 0) if anatomy.get("enable_pose_variation", False) else 0
@@ -263,6 +264,32 @@ def generate_body_parameters(index: int, rng: random.Random, config: dict) -> di
         params[key] = round(rng.uniform(bounds[0], bounds[1]), 1)
 
     return params
+
+
+def select_body_shape(rng: random.Random, config: dict) -> str:
+    controls = config.get("variation_controls") or {}
+    profiles = controls.get("body_shape_profiles") or {}
+    if controls.get("enabled", False) and profiles:
+        return rng.choice(sorted(profiles))
+    return rng.choice(BODY_SHAPES)
+
+
+def ranges_for_body_shape(base_ranges: dict, body_shape: str, config: dict) -> dict:
+    controls = config.get("variation_controls") or {}
+    profiles = controls.get("body_shape_profiles") or {}
+    if not controls.get("enabled", False) or not controls.get("profile_range_overrides_enabled", False):
+        return base_ranges
+
+    profile = profiles.get(body_shape) or {}
+    range_overrides = profile.get("body_parameter_ranges") or {}
+    if not range_overrides:
+        return base_ranges
+
+    ranges = {key: [*bounds] for key, bounds in base_ranges.items()}
+    for key, bounds in range_overrides.items():
+        if key in ranges:
+            ranges[key] = bounds
+    return ranges
 
 
 def apply_body_shape_adjustments(params: dict) -> dict:
