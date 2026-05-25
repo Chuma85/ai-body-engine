@@ -142,6 +142,8 @@ data/synthetic/phase_3g_smoke/
 data/synthetic/phase_3h/
 data/synthetic/phase_3k_smoke_a/
 data/synthetic/phase_3k_smoke_b/
+data/synthetic/phase_3l_clean/
+data/synthetic/phase_3l_realism/
 *.blend
 *.blend1
 *.exr

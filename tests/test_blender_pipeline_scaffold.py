@@ -28,6 +28,8 @@ PHASE_2G_CONFIG_PATH = "synthetic/blender/configs/phase_2g_rigged_mesh_config.ex
 PHASE_2V_CONFIG_PATH = "synthetic/blender/configs/phase_2v_controlled_variation_config.example.json"
 PHASE_3G_CONFIG_PATH = "synthetic/blender/configs/phase_3g_render_realism_config.example.json"
 PHASE_3K_CONFIG_PATH = "synthetic/blender/configs/phase_3k_rng_isolation_config.example.json"
+PHASE_3L_CLEAN_CONFIG_PATH = "synthetic/blender/configs/phase_3l_same_body_clean_config.example.json"
+PHASE_3L_REALISM_CONFIG_PATH = "synthetic/blender/configs/phase_3l_same_body_realism_config.example.json"
 
 
 def test_example_render_config_loads_and_validates() -> None:
@@ -446,6 +448,24 @@ def test_phase_3k_rng_isolation_config_loads_and_validates() -> None:
     assert config.render_realism is not None
     assert config.render_realism["enabled"] is True
     assert config.render_realism["version"] == "phase_3k_render_realism_rng_v1"
+
+
+def test_phase_3l_same_body_configs_share_body_generation_controls() -> None:
+    clean_config = load_render_config(PHASE_3L_CLEAN_CONFIG_PATH)
+    realism_config = load_render_config(PHASE_3L_REALISM_CONFIG_PATH)
+
+    assert clean_config.sample_count == 1000
+    assert realism_config.sample_count == 1000
+    assert clean_config.body_seed == realism_config.body_seed == 42
+    assert clean_config.render_seed == realism_config.render_seed == 314159
+    assert clean_config.body_parameter_ranges == realism_config.body_parameter_ranges
+    assert clean_config.variation_controls == realism_config.variation_controls
+    assert clean_config.image_width == realism_config.image_width == 640
+    assert clean_config.image_height == realism_config.image_height == 896
+    assert clean_config.render_realism is not None
+    assert realism_config.render_realism is not None
+    assert clean_config.render_realism["enabled"] is False
+    assert realism_config.render_realism["enabled"] is True
 
 
 def test_rng_seed_resolution_is_backwards_compatible_with_random_seed() -> None:
