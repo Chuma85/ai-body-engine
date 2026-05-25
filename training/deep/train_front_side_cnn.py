@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from datetime import datetime, timezone
 import json
+import random
 from pathlib import Path
 import sys
 from typing import Any
@@ -16,8 +18,16 @@ from training.deep.synthetic_body_image_dataset import TARGET_COLUMNS, Synthetic
 CONFIG_FILENAME = "config.json"
 METRICS_FILENAME = "metrics.json"
 MODEL_FILENAME = "model.pt"
+PER_TARGET_ERRORS_FILENAME = "per_target_errors.json"
+TARGET_NAMES_FILENAME = "target_names.json"
 MODEL_TYPE = "simple_front_side_cnn"
-EXPERIMENT_RUNNER_VERSION = "phase_3a"
+MODEL_FAMILY = "front_side_cnn"
+EXPERIMENT_RUNNER_VERSION = "phase_3b"
+PREDICTION_FILENAMES = {
+    "train": "predictions_train.csv",
+    "val": "predictions_val.csv",
+    "test": "predictions_test.csv",
+}
 
 
 def train_front_side_cnn(
@@ -28,12 +38,16 @@ def train_front_side_cnn(
     image_size: int = 128,
     batch_size: int = 8,
     learning_rate: float = 1e-3,
+    seed: int = 42,
+    device: str = "cpu",
+    save_predictions: bool = True,
 ) -> dict[str, Any]:
     torch = import_torch()
     if epochs <= 0:
         raise ValueError("epochs must be a positive integer.")
     if batch_size <= 0:
         raise ValueError("batch_size must be a positive integer.")
+    set_training_seed(seed)
 
     dataset_path = Path(dataset_root)
     if not dataset_path.exists():
@@ -41,52 +55,79 @@ def train_front_side_cnn(
 
     train_dataset = SyntheticBodyImageDataset(dataset_path, split="train", image_size=image_size, as_tensors=True, limit_samples=limit_samples)
     val_dataset = SyntheticBodyImageDataset(dataset_path, split="val", image_size=image_size, as_tensors=True, limit_samples=limit_samples)
-    if len(train_dataset) < 2 or len(val_dataset) < 1:
-        raise ValueError("Need at least two train samples and one validation sample for deep smoke training.")
+    test_dataset = SyntheticBodyImageDataset(dataset_path, split="test", image_size=image_size, as_tensors=True, limit_samples=limit_samples)
+    if len(train_dataset) < 2 or len(val_dataset) < 1 or len(test_dataset) < 1:
+        raise ValueError("Need at least two train samples, one validation sample, and one test sample for deep training.")
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    torch_device = resolve_device(device)
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, generator=generator)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     target_mean, target_std = target_normalization(train_dataset)
 
-    device = torch.device("cpu")
-    model = SimpleFrontSideCNN(target_count=len(TARGET_COLUMNS)).to(device)
+    model = SimpleFrontSideCNN(target_count=len(TARGET_COLUMNS)).to(torch_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     loss_fn = torch.nn.MSELoss()
 
     epoch_metrics = []
     for epoch in range(1, epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, loss_fn, target_mean, target_std, device)
-        train_mae = evaluate_mae(model, train_loader, target_mean, target_std, device)
-        val_mae = evaluate_mae(model, val_loader, target_mean, target_std, device)
+        train_loss = train_one_epoch(model, train_loader, optimizer, loss_fn, target_mean, target_std, torch_device)
+        train_eval = evaluate_predictions(model, train_loader, target_mean, target_std, torch_device)
+        val_eval = evaluate_predictions(model, val_loader, target_mean, target_std, torch_device)
         epoch_metrics.append(
             {
                 "epoch": epoch,
                 "train_loss": train_loss,
-                "train_overall_mae": train_mae["overall_mae"],
-                "val_overall_mae": val_mae["overall_mae"],
+                "train_overall_mae": train_eval["metrics"]["overall_mae"],
+                "val_overall_mae": val_eval["metrics"]["overall_mae"],
             }
         )
 
-    final_train = evaluate_mae(model, train_loader, target_mean, target_std, device)
-    final_val = evaluate_mae(model, val_loader, target_mean, target_std, device)
+    evaluations = {
+        "train": evaluate_predictions(model, train_loader, target_mean, target_std, torch_device),
+        "val": evaluate_predictions(model, val_loader, target_mean, target_std, torch_device),
+        "test": evaluate_predictions(model, test_loader, target_mean, target_std, torch_device),
+    }
     metrics = {
         "model_type": MODEL_TYPE,
+        "model_family": MODEL_FAMILY,
         "target_columns": list(TARGET_COLUMNS),
-        "sample_counts": {"train": len(train_dataset), "val": len(val_dataset)},
+        "target_names": list(TARGET_COLUMNS),
+        "sample_counts": {"train": len(train_dataset), "val": len(val_dataset), "test": len(test_dataset)},
         "epochs": epochs,
-        "train": final_train,
-        "val": final_val,
+        "image_size": image_size,
+        "limit_samples": limit_samples,
+        "device": str(torch_device),
+        "train": evaluations["train"]["metrics"],
+        "val": evaluations["val"]["metrics"],
+        "test": evaluations["test"]["metrics"],
         "epoch_metrics": epoch_metrics,
     }
-    config = build_config(dataset_path, epochs, limit_samples, image_size, batch_size, learning_rate)
+    per_target_errors = {
+        split: calculate_per_target_errors(evaluation["prediction_rows"])
+        for split, evaluation in evaluations.items()
+    }
+    config = build_config(dataset_path, epochs, limit_samples, image_size, batch_size, learning_rate, seed, str(torch_device), save_predictions)
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     config_path = output_path / CONFIG_FILENAME
     metrics_path = output_path / METRICS_FILENAME
+    per_target_errors_path = output_path / PER_TARGET_ERRORS_FILENAME
+    target_names_path = output_path / TARGET_NAMES_FILENAME
     model_path = output_path / MODEL_FILENAME
     _write_json(config_path, config)
     _write_json(metrics_path, metrics)
+    _write_json(per_target_errors_path, per_target_errors)
+    _write_json(target_names_path, list(TARGET_COLUMNS))
+    prediction_paths = {}
+    if save_predictions:
+        for split, filename in PREDICTION_FILENAMES.items():
+            prediction_path = output_path / filename
+            write_prediction_csv(prediction_path, evaluations[split]["prediction_rows"])
+            prediction_paths[split] = str(prediction_path)
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -101,9 +142,30 @@ def train_front_side_cnn(
     return {
         "config_path": str(config_path),
         "metrics_path": str(metrics_path),
+        "per_target_errors_path": str(per_target_errors_path),
+        "target_names_path": str(target_names_path),
         "model_path": str(model_path),
+        "prediction_paths": prediction_paths,
         "metrics": metrics,
     }
+
+
+def set_training_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch = import_torch()
+    torch.manual_seed(seed)
+
+
+def resolve_device(device: str) -> Any:
+    torch = import_torch()
+    if device not in {"cpu", "cuda", "auto"}:
+        raise ValueError("device must be one of: cpu, cuda, auto.")
+    if device == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device == "cuda" and not torch.cuda.is_available():
+        raise ValueError("CUDA was requested, but torch.cuda.is_available() is false.")
+    return torch.device(device)
 
 
 def target_normalization(dataset: SyntheticBodyImageDataset) -> tuple[Any, Any]:
@@ -133,11 +195,13 @@ def train_one_epoch(model: Any, loader: Any, optimizer: Any, loss_fn: Any, targe
     return float(np.mean(losses)) if losses else 0.0
 
 
-def evaluate_mae(model: Any, loader: Any, target_mean: Any, target_std: Any, device: Any) -> dict[str, Any]:
+def evaluate_predictions(model: Any, loader: Any, target_mean: Any, target_std: Any, device: Any) -> dict[str, Any]:
     torch = import_torch()
     model.eval()
     prediction_rows = []
     target_rows = []
+    sample_ids: list[str] = []
+    splits: list[str] = []
     with torch.no_grad():
         for batch in loader:
             front_images = batch["front_image"].to(device)
@@ -147,18 +211,78 @@ def evaluate_mae(model: Any, loader: Any, target_mean: Any, target_std: Any, dev
             predictions = normalized_predictions * target_std.to(device) + target_mean.to(device)
             prediction_rows.append(predictions.cpu())
             target_rows.append(targets.cpu())
+            sample_ids.extend(str(sample_id) for sample_id in batch["sample_id"])
+            splits.extend(str(split) for split in batch["split"])
 
     predictions = torch.cat(prediction_rows, dim=0)
     targets = torch.cat(target_rows, dim=0)
     absolute_errors = torch.abs(predictions - targets).numpy()
-    mae_by_target = {
-        target: float(absolute_errors[:, index].mean())
-        for index, target in enumerate(TARGET_COLUMNS)
+    prediction_csv_rows = build_prediction_rows(sample_ids, splits, targets.numpy(), predictions.numpy())
+    metrics = calculate_metrics_from_errors(absolute_errors)
+    return {
+        "metrics": metrics,
+        "prediction_rows": prediction_csv_rows,
     }
+
+
+def calculate_metrics_from_errors(absolute_errors: np.ndarray) -> dict[str, Any]:
+    mae_by_target = {target: float(absolute_errors[:, index].mean()) for index, target in enumerate(TARGET_COLUMNS)}
     return {
         "overall_mae": float(np.mean(list(mae_by_target.values()))),
         "mae_by_target": mae_by_target,
     }
+
+
+def build_prediction_rows(
+    sample_ids: list[str],
+    splits: list[str],
+    target_matrix: np.ndarray,
+    prediction_matrix: np.ndarray,
+) -> list[dict[str, Any]]:
+    rows = []
+    for row_index, sample_id in enumerate(sample_ids):
+        row: dict[str, Any] = {
+            "sample_id": sample_id,
+            "split": splits[row_index],
+        }
+        for target_index, target in enumerate(TARGET_COLUMNS):
+            true_value = float(target_matrix[row_index, target_index])
+            prediction = float(prediction_matrix[row_index, target_index])
+            row[f"true_{target}"] = true_value
+            row[f"pred_{target}"] = prediction
+            row[f"abs_error_{target}"] = abs(prediction - true_value)
+        rows.append(row)
+    return rows
+
+
+def calculate_per_target_errors(prediction_rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int]]:
+    if not prediction_rows:
+        raise ValueError("Cannot calculate per-target errors with zero prediction rows.")
+    errors: dict[str, dict[str, float | int]] = {}
+    for target in TARGET_COLUMNS:
+        values = [float(row[f"abs_error_{target}"]) for row in prediction_rows]
+        errors[target] = {
+            "count": len(values),
+            "mae": float(np.mean(values)),
+            "max_abs_error": max(values),
+        }
+    return errors
+
+
+def write_prediction_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    fieldnames = prediction_fieldnames()
+    with path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: _csv_value(row[field]) for field in fieldnames})
+
+
+def prediction_fieldnames() -> list[str]:
+    fieldnames = ["sample_id", "split"]
+    for target in TARGET_COLUMNS:
+        fieldnames.extend([f"true_{target}", f"pred_{target}", f"abs_error_{target}"])
+    return fieldnames
 
 
 def build_config(
@@ -168,17 +292,33 @@ def build_config(
     image_size: int,
     batch_size: int,
     learning_rate: float,
+    seed: int,
+    device: str,
+    save_predictions: bool,
 ) -> dict[str, Any]:
     return {
         "dataset": str(dataset_root),
-        "model_type": MODEL_TYPE,
         "target_columns": list(TARGET_COLUMNS),
+        "target_names": list(TARGET_COLUMNS),
         "image_size": image_size,
         "epochs": epochs,
         "limit_samples": limit_samples,
         "batch_size": batch_size,
         "learning_rate": learning_rate,
-        "device": "cpu",
+        "seed": seed,
+        "device": device,
+        "save_predictions": save_predictions,
+        "model": {
+            "type": MODEL_FAMILY,
+            "artifact_type": MODEL_TYPE,
+            "regression_method": "front_side_cnn_regression",
+            "hyperparameters": {
+                "image_size": image_size,
+                "batch_size": batch_size,
+                "learning_rate": learning_rate,
+                "epochs": epochs,
+            },
+        },
         "experiment_runner_version": EXPERIMENT_RUNNER_VERSION,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
     }
@@ -190,16 +330,25 @@ def _write_json(path: Path, payload: Any) -> None:
         json_file.write("\n")
 
 
+def _csv_value(value: Any) -> str:
+    if isinstance(value, float):
+        return f"{value:.6f}"
+    return str(value)
+
+
 def format_training_report(result: dict[str, Any]) -> str:
     metrics = result["metrics"]
     return "\n".join(
         [
             f"Model: {metrics['model_type']}",
             f"Samples: train={metrics['sample_counts']['train']} val={metrics['sample_counts']['val']}",
+            f"test samples: {metrics['sample_counts']['test']}",
             f"train overall MAE: {metrics['train']['overall_mae']:.4f}",
             f"val overall MAE: {metrics['val']['overall_mae']:.4f}",
+            f"test overall MAE: {metrics['test']['overall_mae']:.4f}",
             f"Config artifact: {result['config_path']}",
             f"Metrics artifact: {result['metrics_path']}",
+            f"Per-target errors artifact: {result['per_target_errors_path']}",
             f"Model artifact: {result['model_path']}",
         ]
     )
@@ -214,6 +363,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--image-size", type=int, default=128)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--device", choices=["cpu", "cuda", "auto"], default="cpu")
+    parser.add_argument("--save-predictions", action="store_true", default=True)
     args = parser.parse_args(argv)
 
     try:
@@ -225,6 +377,9 @@ def main(argv: list[str] | None = None) -> int:
             image_size=args.image_size,
             batch_size=args.batch_size,
             learning_rate=args.learning_rate,
+            seed=args.seed,
+            device=args.device,
+            save_predictions=args.save_predictions,
         )
     except DeepLearningDependencyError as error:
         print(str(error), file=sys.stderr)

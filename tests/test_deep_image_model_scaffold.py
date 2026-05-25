@@ -19,6 +19,7 @@ from training.deep.synthetic_body_image_dataset import (
     target_vector,
 )
 from training.deep.train_front_side_cnn import main, train_front_side_cnn
+from training.deep.train_front_side_cnn import calculate_metrics_from_errors, calculate_per_target_errors
 
 
 def test_load_normalized_image_resizes_and_channels_first(tmp_path) -> None:
@@ -89,6 +90,23 @@ def test_cli_missing_dependency_behavior(monkeypatch, tmp_path, capsys) -> None:
     assert "missing torch for test" in captured.err
 
 
+def test_deep_per_target_metrics_are_calculated() -> None:
+    errors = np.asarray([[1.0] * len(TARGET_COLUMNS), [3.0] * len(TARGET_COLUMNS)], dtype=np.float32)
+    rows = [
+        {f"abs_error_{target}": 1.0 for target in TARGET_COLUMNS},
+        {f"abs_error_{target}": 3.0 for target in TARGET_COLUMNS},
+    ]
+
+    metrics = calculate_metrics_from_errors(errors)
+    per_target = calculate_per_target_errors(rows)
+
+    assert metrics["overall_mae"] == pytest.approx(2.0)
+    assert metrics["mae_by_target"]["height_cm"] == pytest.approx(2.0)
+    assert per_target["height_cm"]["count"] == 2
+    assert per_target["height_cm"]["mae"] == pytest.approx(2.0)
+    assert per_target["height_cm"]["max_abs_error"] == 3.0
+
+
 def test_tiny_smoke_training_if_torch_available(tmp_path, monkeypatch) -> None:
     if importlib.util.find_spec("torch") is None:
         pytest.skip("PyTorch is not installed.")
@@ -123,9 +141,23 @@ def test_tiny_smoke_training_if_torch_available(tmp_path, monkeypatch) -> None:
     assert (output_dir / "config.json").exists()
     assert (output_dir / "metrics.json").exists()
     assert (output_dir / "model.pt").exists()
+    assert (output_dir / "per_target_errors.json").exists()
+    assert (output_dir / "target_names.json").exists()
+    assert (output_dir / "predictions_train.csv").exists()
+    assert (output_dir / "predictions_val.csv").exists()
+    assert (output_dir / "predictions_test.csv").exists()
     metrics = json.loads((output_dir / "metrics.json").read_text(encoding="utf-8"))
-    assert metrics["sample_counts"] == {"train": 8, "val": 2}
+    assert metrics["sample_counts"] == {"train": 8, "val": 2, "test": 2}
     assert "overall_mae" in metrics["val"]
+    assert "overall_mae" in metrics["test"]
+    with (output_dir / "predictions_test.csv").open("r", newline="", encoding="utf-8") as predictions_file:
+        rows = list(csv.DictReader(predictions_file))
+    assert len(rows) == 2
+    assert rows[0]["sample_id"].startswith("sample_")
+    assert rows[0]["split"] == "test"
+    assert f"true_{TARGET_COLUMNS[0]}" in rows[0]
+    assert f"pred_{TARGET_COLUMNS[0]}" in rows[0]
+    assert f"abs_error_{TARGET_COLUMNS[0]}" in rows[0]
 
 
 def _write_dataset(tmp_path: Path, count: int) -> Path:
