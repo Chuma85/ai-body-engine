@@ -138,6 +138,7 @@ data/synthetic/phase_2q/manifest.csv
 !data/synthetic/phase_2q/labels/.gitkeep
 data/synthetic/phase_2v/
 data/synthetic/phase_2v_recovery_smoke/
+data/synthetic/phase_3g_smoke/
 *.blend
 *.blend1
 *.exr

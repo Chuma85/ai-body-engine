@@ -25,6 +25,7 @@ PHASE_2E_CONFIG_PATH = "synthetic/blender/configs/phase_2e_base_mesh_config.exam
 PHASE_2F_CONFIG_PATH = "synthetic/blender/configs/phase_2f_mesh_variation_config.example.json"
 PHASE_2G_CONFIG_PATH = "synthetic/blender/configs/phase_2g_rigged_mesh_config.example.json"
 PHASE_2V_CONFIG_PATH = "synthetic/blender/configs/phase_2v_controlled_variation_config.example.json"
+PHASE_3G_CONFIG_PATH = "synthetic/blender/configs/phase_3g_render_realism_config.example.json"
 
 
 def test_example_render_config_loads_and_validates() -> None:
@@ -406,6 +407,118 @@ def test_phase_2v_blender_command_can_be_built() -> None:
 
     assert command[-1] == PHASE_2V_CONFIG_PATH
     assert format_command(command).endswith("--config synthetic/blender/configs/phase_2v_controlled_variation_config.example.json")
+
+
+def test_render_realism_defaults_are_disabled_for_existing_configs() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    config = load_render_config(PHASE_2G_CONFIG_PATH)
+
+    controls = module.render_realism_controls(config.__dict__)
+
+    assert config.render_realism is None
+    assert controls["enabled"] is False
+    assert controls["camera"]["distance_jitter_range"] == [0.0, 0.0]
+    assert controls["materials"]["skin_tone_brightness_range"] == [1.0, 1.0]
+
+
+def test_phase_3g_render_realism_config_loads_and_validates() -> None:
+    config = load_render_config(PHASE_3G_CONFIG_PATH)
+
+    assert config.generator_version == "phase_3g_render_realism_v1"
+    assert config.output_dir == "data/synthetic/phase_3g_smoke"
+    assert config.render_realism is not None
+    assert config.render_realism["enabled"] is True
+    assert config.render_realism["background"]["brightness_range"] == [0.82, 1.0]
+    assert config.render_realism["camera"]["orthographic_scale_jitter_range"] == [1.0, 1.05]
+
+
+def test_render_realism_resolution_override_is_optional_and_compatible() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    config = {
+        "image_width": 768,
+        "image_height": 1024,
+        "render_realism": {
+            "enabled": True,
+            "render_resolution": {
+                "enabled": True,
+                "image_width": 640,
+                "image_height": 896,
+            },
+        },
+    }
+
+    module.apply_render_realism_resolution_override(config)
+
+    assert config["image_width"] == 640
+    assert config["image_height"] == 896
+
+
+def test_render_realism_camera_jitter_stays_inside_safe_bounds() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    config = {
+        "render_realism": {
+            "enabled": True,
+            "camera": {
+                "distance_jitter_range": [-0.12, 0.12],
+                "orthographic_scale_jitter_range": [1.0, 1.05],
+                "lateral_offset_range": [-0.035, 0.035],
+                "vertical_offset_range": [-0.035, 0.035],
+            },
+        },
+    }
+
+    jitter = module.camera_jitter(config, random.Random(42))
+
+    assert -0.12 <= jitter["distance_delta"] <= 0.12
+    assert 1.0 <= jitter["orthographic_scale_multiplier"] <= 1.05
+    assert -0.035 <= jitter["lateral_offset"] <= 0.035
+    assert -0.035 <= jitter["vertical_offset"] <= 0.035
+
+
+def test_render_realism_rejects_unsafe_camera_jitter() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    config = {
+        "render_realism": {
+            "enabled": True,
+            "camera": {
+                "lateral_offset_range": [-0.5, 0.5],
+            },
+        },
+    }
+
+    with pytest.raises(ValueError, match="lateral_offset_range"):
+        module.render_realism_controls(config)
+
+
+def test_phase_3g_label_row_format_remains_compatible() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    config = module.load_config(PHASE_3G_CONFIG_PATH)
+    front_path = module.repo_root() / "data" / "synthetic" / "phase_3g_smoke" / "images" / "front" / "sample_000001_front.png"
+    side_path = module.repo_root() / "data" / "synthetic" / "phase_3g_smoke" / "images" / "side" / "sample_000001_side.png"
+    params = {
+        "sample_id": "sample_000001",
+        "height_cm": 180.0,
+        "weight_kg": 75.0,
+        "chest_cm": 100.0,
+        "waist_cm": 82.0,
+        "hip_cm": 101.0,
+        "shoulder_cm": 45.0,
+        "inseam_cm": 82.0,
+        "sleeve_cm": 62.0,
+        "neck_cm": 39.0,
+        "thigh_cm": 56.0,
+        "calf_cm": 38.0,
+        "body_shape": "average",
+        "skin_tone_id": 0,
+        "pose_variation_degrees": 0.0,
+    }
+
+    row = module.label_row_for_sample(params, config, front_path, side_path, module.resume_render_metadata(config))
+
+    assert set(row) == set(module.LABEL_COLUMNS)
+    assert validate_measurement_row(row) is True
+    assert row["render_width"] == 768
+    assert row["render_height"] == 1024
 
 
 def test_deformation_math_clamps_and_normalizes_values() -> None:

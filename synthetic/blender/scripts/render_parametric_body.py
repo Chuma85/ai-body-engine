@@ -27,6 +27,30 @@ GENERATOR_VERSION = "phase_2c_blender_procedural_body_v1"
 BODY_SHAPES = ("slim", "average", "athletic", "curvy", "broad", "plus")
 CANONICAL_FRONT_AXIS = "-Y"
 CANONICAL_SIDE_VIEW_AXIS = "-X"
+DEFAULT_RENDER_REALISM_CONTROLS = {
+    "enabled": False,
+    "background": {
+        "brightness_range": [1.0, 1.0],
+        "color_jitter": 0.0,
+    },
+    "lighting": {
+        "strength_multiplier_range": [1.0, 1.0],
+    },
+    "camera": {
+        "distance_jitter_range": [0.0, 0.0],
+        "orthographic_scale_jitter_range": [1.0, 1.0],
+        "lateral_offset_range": [0.0, 0.0],
+        "vertical_offset_range": [0.0, 0.0],
+    },
+    "render_resolution": {
+        "enabled": False,
+        "image_width": None,
+        "image_height": None,
+    },
+    "materials": {
+        "skin_tone_brightness_range": [1.0, 1.0],
+    },
+}
 HORIZONTAL_AXIS_ANGLES = {
     "+X": 0.0,
     "+Y": math.pi / 2,
@@ -88,6 +112,7 @@ def main() -> None:
 
     config = load_config(args.config)
     apply_cli_overrides(config, args)
+    apply_render_realism_resolution_override(config)
     resolved_output_dir = resolve_output_dir(config["output_dir"])
     output_dirs = ensure_output_dirs(resolved_output_dir)
     rng = random.Random(config["random_seed"])
@@ -126,13 +151,14 @@ def main() -> None:
             continue
 
         clear_scene(bpy)
-        setup_world_background(bpy, config)
+        setup_world_background(bpy, config, rng)
         setup_render_quality(bpy, config)
-        material = create_material(bpy, f"{params['sample_id']}_skin", params["skin_tone"])
+        material = create_material(bpy, f"{params['sample_id']}_skin", adjusted_skin_tone(params["skin_tone"], config, rng))
         render_metadata = create_body_from_config(bpy, params, config, material)
         setup_lighting(bpy, config, rng)
 
-        front_camera = setup_camera(bpy, "front", config["camera_distance"], config["camera_focal_length"])
+        front_camera_jitter = camera_jitter(config, rng)
+        front_camera = setup_camera(bpy, "front", config["camera_distance"], config["camera_focal_length"], front_camera_jitter)
         if render_metadata.get("objects") and (config.get("camera") or {}).get("auto_frame_body", False):
             auto_frame_camera_to_objects(
                 bpy,
@@ -144,10 +170,12 @@ def main() -> None:
                 config["image_width"],
                 config["image_height"],
                 config["camera_distance"],
+                front_camera_jitter,
             )
         render_view(bpy, front_path, config["image_width"], config["image_height"])
 
-        side_camera = setup_camera(bpy, "side", config["camera_distance"], config["camera_focal_length"])
+        side_camera_jitter = camera_jitter(config, rng)
+        side_camera = setup_camera(bpy, "side", config["camera_distance"], config["camera_focal_length"], side_camera_jitter)
         if render_metadata.get("objects") and (config.get("camera") or {}).get("auto_frame_body", False):
             auto_frame_camera_to_objects(
                 bpy,
@@ -159,6 +187,7 @@ def main() -> None:
                 config["image_width"],
                 config["image_height"],
                 config["camera_distance"],
+                side_camera_jitter,
             )
         render_view(bpy, side_path, config["image_width"], config["image_height"])
 
@@ -184,6 +213,67 @@ def apply_cli_overrides(config: dict, args: argparse.Namespace) -> None:
         config["output_dir"] = args.output
     if args.num_samples is not None:
         config["sample_count"] = args.num_samples
+
+
+def render_realism_controls(config: dict) -> dict:
+    controls = _deep_copy_dict(DEFAULT_RENDER_REALISM_CONTROLS)
+    user_controls = config.get("render_realism") or {}
+    _deep_update(controls, user_controls)
+    controls["enabled"] = bool(controls.get("enabled", False))
+    validate_render_realism_controls(controls)
+    return controls
+
+
+def apply_render_realism_resolution_override(config: dict) -> None:
+    controls = render_realism_controls(config)
+    resolution = controls.get("render_resolution") or {}
+    if not controls["enabled"] or not resolution.get("enabled", False):
+        return
+    width = resolution.get("image_width")
+    height = resolution.get("image_height")
+    if width is not None:
+        config["image_width"] = int(width)
+    if height is not None:
+        config["image_height"] = int(height)
+
+
+def validate_render_realism_controls(controls: dict) -> None:
+    _validate_range(controls["background"]["brightness_range"], "render_realism.background.brightness_range", 0.1, 2.0)
+    color_jitter = float(controls["background"].get("color_jitter", 0.0))
+    if not 0.0 <= color_jitter <= 0.25:
+        raise ValueError("render_realism.background.color_jitter must be between 0.0 and 0.25.")
+    _validate_range(controls["lighting"]["strength_multiplier_range"], "render_realism.lighting.strength_multiplier_range", 0.25, 2.0)
+    _validate_range(controls["camera"]["distance_jitter_range"], "render_realism.camera.distance_jitter_range", -0.5, 0.5)
+    _validate_range(controls["camera"]["orthographic_scale_jitter_range"], "render_realism.camera.orthographic_scale_jitter_range", 0.9, 1.15)
+    _validate_range(controls["camera"]["lateral_offset_range"], "render_realism.camera.lateral_offset_range", -0.12, 0.12)
+    _validate_range(controls["camera"]["vertical_offset_range"], "render_realism.camera.vertical_offset_range", -0.12, 0.12)
+    resolution = controls["render_resolution"]
+    if resolution.get("enabled", False):
+        if resolution.get("image_width") is not None and int(resolution["image_width"]) <= 0:
+            raise ValueError("render_realism.render_resolution.image_width must be positive.")
+        if resolution.get("image_height") is not None and int(resolution["image_height"]) <= 0:
+            raise ValueError("render_realism.render_resolution.image_height must be positive.")
+    _validate_range(controls["materials"]["skin_tone_brightness_range"], "render_realism.materials.skin_tone_brightness_range", 0.5, 1.5)
+
+
+def _validate_range(bounds: list[float], label: str, minimum_allowed: float, maximum_allowed: float) -> None:
+    if len(bounds) != 2 or bounds[0] > bounds[1]:
+        raise ValueError(f"{label} must contain [min, max] with min <= max.")
+    if bounds[0] < minimum_allowed or bounds[1] > maximum_allowed:
+        raise ValueError(f"{label} must stay within safe bounds [{minimum_allowed}, {maximum_allowed}].")
+
+
+def _deep_copy_dict(value: dict) -> dict:
+    return json.loads(json.dumps(value))
+
+
+def _deep_update(base: dict, updates: dict) -> dict:
+    for key, value in updates.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_update(base[key], value)
+        else:
+            base[key] = value
+    return base
 
 
 def label_row_for_sample(params: dict, config: dict, front_path: Path, side_path: Path, render_metadata: dict) -> dict:
@@ -371,6 +461,17 @@ def apply_body_shape_adjustments(params: dict) -> dict:
 def clear_scene(bpy) -> None:
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete()
+
+
+def adjusted_skin_tone(rgba: list[float], config: dict, rng: random.Random) -> list[float]:
+    controls = render_realism_controls(config)
+    if not controls["enabled"]:
+        return rgba
+    bounds = controls["materials"]["skin_tone_brightness_range"]
+    multiplier = rng.uniform(bounds[0], bounds[1])
+    adjusted = [_clamp(channel * multiplier, 0.0, 1.0) for channel in rgba[:3]]
+    alpha = rgba[3] if len(rgba) > 3 else 1.0
+    return [*adjusted, alpha]
 
 
 def create_material(bpy, name: str, rgba: list[float]):
@@ -951,13 +1052,19 @@ def create_procedural_body(bpy, params: dict, material, config: dict | None = No
         create_ellipsoid(bpy, f"{side}_foot", (leg_x + side * 0.04, -0.09, 0.03), (dims["calf_radius"] * 1.35, dims["calf_radius"] * 2.1, 0.05), material)
 
 
-def setup_camera(bpy, view: str, camera_distance: float, focal_length: float):
-    location, rotation = camera_transform_for_view(view, (0, 0, 1.45), camera_distance)
+def setup_camera(bpy, view: str, camera_distance: float, focal_length: float, jitter: dict | None = None):
+    jitter = jitter or default_camera_jitter()
+    center = camera_center_with_jitter(view, (0, 0, 1.45), jitter)
+    location, rotation = camera_transform_for_view(
+        view,
+        center,
+        max(0.1, camera_distance + jitter["distance_delta"]),
+    )
     bpy.ops.object.camera_add(location=location, rotation=rotation)
     camera = bpy.context.object
     camera.data.lens = focal_length
     camera.data.type = "ORTHO"
-    camera.data.ortho_scale = 3.6
+    camera.data.ortho_scale = 3.6 * jitter["orthographic_scale_multiplier"]
     bpy.context.scene.camera = camera
     return camera
 
@@ -975,6 +1082,15 @@ def camera_transform_for_view(
     raise ValueError(f"Unsupported view: {view}")
 
 
+def camera_center_with_jitter(view: str, center: tuple[float, float, float], jitter: dict[str, float]) -> tuple[float, float, float]:
+    center_x, center_y, center_z = center
+    if view == "front":
+        return (center_x + jitter["lateral_offset"], center_y, center_z + jitter["vertical_offset"])
+    if view == "side":
+        return (center_x, center_y + jitter["lateral_offset"], center_z + jitter["vertical_offset"])
+    raise ValueError(f"Unsupported view: {view}")
+
+
 def camera_frame_dimensions(bounds: tuple[float, float, float, float, float, float], view: str) -> tuple[float, float, float]:
     min_x, max_x, min_y, max_y, min_z, max_z = bounds
     height = max(max_z - min_z, 0.1)
@@ -989,6 +1105,28 @@ def orthographic_scale_for_frame(frame_width: float, frame_height: float, aspect
     return max(frame_height, frame_width / max(aspect_ratio, 0.01)) * (1.0 + margin)
 
 
+def default_camera_jitter() -> dict[str, float]:
+    return {
+        "distance_delta": 0.0,
+        "orthographic_scale_multiplier": 1.0,
+        "lateral_offset": 0.0,
+        "vertical_offset": 0.0,
+    }
+
+
+def camera_jitter(config: dict, rng: random.Random) -> dict[str, float]:
+    controls = render_realism_controls(config)
+    if not controls["enabled"]:
+        return default_camera_jitter()
+    camera_controls = controls["camera"]
+    return {
+        "distance_delta": rng.uniform(*camera_controls["distance_jitter_range"]),
+        "orthographic_scale_multiplier": rng.uniform(*camera_controls["orthographic_scale_jitter_range"]),
+        "lateral_offset": rng.uniform(*camera_controls["lateral_offset_range"]),
+        "vertical_offset": rng.uniform(*camera_controls["vertical_offset_range"]),
+    }
+
+
 def auto_frame_camera_to_objects(
     bpy,
     camera,
@@ -999,19 +1137,22 @@ def auto_frame_camera_to_objects(
     image_width: int | None = None,
     image_height: int | None = None,
     minimum_distance: float = 2.5,
+    jitter: dict | None = None,
 ) -> None:
+    jitter = jitter or default_camera_jitter()
     min_x, max_x, min_y, max_y, min_z, max_z = get_object_bounds_world(objects)
     center_x = (min_x + max_x) / 2
     center_y = (min_y + max_y) / 2
     center_z = (min_z + max_z) / 2
     frame_width, frame_height, frame_depth = camera_frame_dimensions((min_x, max_x, min_y, max_y, min_z, max_z), view)
     aspect_ratio = (image_width or 1) / max(image_height or 1, 1)
-    distance = max(minimum_distance, frame_depth * 3.0 + 1.0)
-    camera.location, camera.rotation_euler = camera_transform_for_view(view, (center_x, center_y, center_z), distance)
+    distance = max(minimum_distance, frame_depth * 3.0 + 1.0 + jitter["distance_delta"])
+    jittered_center = camera_center_with_jitter(view, (center_x, center_y, center_z), jitter)
+    camera.location, camera.rotation_euler = camera_transform_for_view(view, jittered_center, distance)
 
     camera.data.lens = focal_length
     camera.data.type = "ORTHO"
-    camera.data.ortho_scale = orthographic_scale_for_frame(frame_width, frame_height, aspect_ratio, margin)
+    camera.data.ortho_scale = orthographic_scale_for_frame(frame_width, frame_height, aspect_ratio, margin) * jitter["orthographic_scale_multiplier"]
     bpy.context.scene.camera = camera
     bpy.context.view_layer.update()
 
@@ -1019,6 +1160,9 @@ def auto_frame_camera_to_objects(
 def setup_lighting(bpy, config: dict, rng: random.Random) -> None:
     randomize = config.get("lighting", {}).get("randomize_strength", False)
     strength = 650 + (rng.uniform(-120, 120) if randomize else 0)
+    controls = render_realism_controls(config)
+    if controls["enabled"]:
+        strength *= rng.uniform(*controls["lighting"]["strength_multiplier_range"])
 
     for name, location, energy in (
         ("key_light", (-2.5, -3.0, 4.0), strength),
@@ -1032,8 +1176,18 @@ def setup_lighting(bpy, config: dict, rng: random.Random) -> None:
         light.data.size = 4
 
 
-def setup_world_background(bpy, config: dict) -> None:
+def setup_world_background(bpy, config: dict, rng: random.Random | None = None) -> None:
     color = config.get("background", {}).get("color", [1, 1, 1])
+    if rng is not None:
+        controls = render_realism_controls(config)
+        if controls["enabled"]:
+            background = controls["background"]
+            brightness = rng.uniform(*background["brightness_range"])
+            jitter = float(background.get("color_jitter", 0.0))
+            color = [
+                _clamp(channel * brightness + rng.uniform(-jitter, jitter), 0.0, 1.0)
+                for channel in color[:3]
+            ]
     bpy.context.scene.world.color = (color[0], color[1], color[2])
     render_engine = config.get("render_engine", "BLENDER_EEVEE_NEXT")
     try:
