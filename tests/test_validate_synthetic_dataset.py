@@ -36,6 +36,17 @@ def test_missing_labels_csv_fails(tmp_path) -> None:
     assert str(dataset / "labels" / "labels.csv") in result["missing_paths"]
 
 
+def test_partial_image_output_without_labels_fails(tmp_path) -> None:
+    dataset = _write_dataset(tmp_path, ["sample_000001"])
+    (dataset / "labels" / "labels.csv").unlink()
+
+    result = validate_dataset(dataset)
+
+    assert result["valid"] is False
+    assert result["sample_count"] == 0
+    assert any("labels.csv" in error for error in result["errors"])
+
+
 def test_missing_front_image_fails(tmp_path) -> None:
     dataset = _write_dataset(tmp_path, ["sample_000001"])
     (dataset / "images" / "front" / "sample_000001_front.png").unlink()

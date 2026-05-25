@@ -24,6 +24,7 @@ PHASE_2D_CONFIG_PATH = "synthetic/blender/configs/phase_2d_render_config.example
 PHASE_2E_CONFIG_PATH = "synthetic/blender/configs/phase_2e_base_mesh_config.example.json"
 PHASE_2F_CONFIG_PATH = "synthetic/blender/configs/phase_2f_mesh_variation_config.example.json"
 PHASE_2G_CONFIG_PATH = "synthetic/blender/configs/phase_2g_rigged_mesh_config.example.json"
+PHASE_2V_CONFIG_PATH = "synthetic/blender/configs/phase_2v_controlled_variation_config.example.json"
 
 
 def test_example_render_config_loads_and_validates() -> None:
@@ -383,6 +384,30 @@ def test_phase_2g_blender_command_can_be_built() -> None:
     assert format_command(command).endswith("--config synthetic/blender/configs/phase_2g_rigged_mesh_config.example.json")
 
 
+def test_phase_2v_controlled_variation_config_loads_and_validates() -> None:
+    config = load_render_config(PHASE_2V_CONFIG_PATH)
+
+    assert config.generator_version == "phase_2v_controlled_variation_v1"
+    assert config.output_dir == "data/synthetic/phase_2v"
+    assert config.sample_count == 1000
+    assert config.variation_controls is not None
+    assert config.variation_controls["enabled"] is True
+    assert config.variation_controls["profile_range_overrides_enabled"] is True
+    assert sorted(config.variation_controls["body_shape_profiles"]) == ["average", "broad", "curvy", "slim"]
+
+
+def test_phase_2v_blender_command_can_be_built() -> None:
+    command = build_blender_command(
+        blender_executable="blender",
+        script_path="synthetic/blender/scripts/render_parametric_body.py",
+        config_path=PHASE_2V_CONFIG_PATH,
+        dry_run=True,
+    )
+
+    assert command[-1] == PHASE_2V_CONFIG_PATH
+    assert format_command(command).endswith("--config synthetic/blender/configs/phase_2v_controlled_variation_config.example.json")
+
+
 def test_deformation_math_clamps_and_normalizes_values() -> None:
     assert clamp(-1, 0, 1) == 0
     assert clamp(2, 0, 1) == 1
@@ -475,6 +500,112 @@ def test_phase_2i_cli_overrides_output_and_sample_count() -> None:
 
     assert config["output_dir"] == "data/synthetic/phase_2i"
     assert config["sample_count"] == 2
+
+
+def test_phase_2v_batch_label_writer_can_append(tmp_path) -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    labels_path = tmp_path / "labels.csv"
+    first_row = {column: "" for column in module.LABEL_COLUMNS}
+    first_row.update({"sample_id": "sample_000001", "front_image_path": "front1.png", "side_image_path": "side1.png"})
+    second_row = {column: "" for column in module.LABEL_COLUMNS}
+    second_row.update({"sample_id": "sample_000002", "front_image_path": "front2.png", "side_image_path": "side2.png"})
+
+    module.write_labels_csv([first_row], labels_path)
+    module.write_labels_csv([second_row], labels_path, append=True)
+
+    with labels_path.open("r", newline="", encoding="utf-8") as labels_file:
+        rows = list(csv.DictReader(labels_file))
+
+    assert [row["sample_id"] for row in rows] == ["sample_000001", "sample_000002"]
+
+
+def test_phase_2v_incremental_label_writer_flushes_each_row(tmp_path) -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    labels_path = tmp_path / "labels.csv"
+    row = {column: "" for column in module.LABEL_COLUMNS}
+    row.update({"sample_id": "sample_000001", "front_image_path": "front1.png", "side_image_path": "side1.png"})
+
+    module.append_label_row(labels_path, row)
+
+    assert module.read_labeled_sample_ids(labels_path) == {"sample_000001"}
+
+
+def test_phase_2v_resume_action_skips_completed_samples(tmp_path) -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    front_path = tmp_path / "sample_000001_front.png"
+    side_path = tmp_path / "sample_000001_side.png"
+    front_path.write_bytes(b"front")
+    side_path.write_bytes(b"side")
+
+    action = module.resume_action_for_sample("sample_000001", front_path, side_path, {"sample_000001"})
+
+    assert action == "skip"
+
+
+def test_phase_2v_resume_action_checkpoints_rendered_pair_without_label(tmp_path) -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    front_path = tmp_path / "sample_000001_front.png"
+    side_path = tmp_path / "sample_000001_side.png"
+    front_path.write_bytes(b"front")
+    side_path.write_bytes(b"side")
+
+    action = module.resume_action_for_sample("sample_000001", front_path, side_path, set())
+
+    assert action == "checkpoint_existing_pair"
+
+
+def test_phase_2v_resume_does_not_create_duplicate_label_rows(tmp_path) -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    labels_path = tmp_path / "labels.csv"
+    row = {column: "" for column in module.LABEL_COLUMNS}
+    row.update({"sample_id": "sample_000001", "front_image_path": "front1.png", "side_image_path": "side1.png"})
+
+    module.append_label_row(labels_path, row)
+    labeled_sample_ids = module.read_labeled_sample_ids(labels_path)
+    if "sample_000001" not in labeled_sample_ids:
+        module.append_label_row(labels_path, row)
+
+    with labels_path.open("r", newline="", encoding="utf-8") as labels_file:
+        rows = list(csv.DictReader(labels_file))
+
+    assert [label_row["sample_id"] for label_row in rows] == ["sample_000001"]
+
+
+def test_phase_2v_batch_rng_matches_single_pass_sequence() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    config = {
+        "random_seed": 42,
+        "body_parameter_ranges": {
+            "height_cm": [150, 205],
+            "weight_kg": [45, 130],
+            "chest_cm": [75, 130],
+            "waist_cm": [55, 125],
+            "hip_cm": [75, 135],
+            "shoulder_cm": [35, 60],
+            "inseam_cm": [65, 95],
+            "sleeve_cm": [50, 75],
+            "neck_cm": [30, 50],
+            "thigh_cm": [40, 80],
+            "calf_cm": [28, 55],
+        },
+        "variation_controls": {
+            "enabled": True,
+            "profile_range_overrides_enabled": True,
+            "body_shape_profiles": {
+                "slim": {"body_parameter_ranges": {"weight_kg": [45, 78]}},
+                "average": {"body_parameter_ranges": {"weight_kg": [55, 95]}},
+            },
+        },
+    }
+    single_rng = random.Random(config["random_seed"])
+    batch_rng = random.Random(config["random_seed"])
+
+    single_pass = [module.generate_body_parameters(index, single_rng, config) for index in range(1, 6)]
+    for skipped_index in range(1, 5):
+        module.generate_body_parameters(skipped_index, batch_rng, config)
+    batch_sample = module.generate_body_parameters(5, batch_rng, config)
+
+    assert batch_sample == single_pass[-1]
 
 
 def test_validate_mock_phase_2c_dataset(tmp_path) -> None:

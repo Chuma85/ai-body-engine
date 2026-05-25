@@ -91,23 +91,46 @@ def main() -> None:
     resolved_output_dir = resolve_output_dir(config["output_dir"])
     output_dirs = ensure_output_dirs(resolved_output_dir)
     rng = random.Random(config["random_seed"])
-    rows = []
+    start_index = args.start_index
+    end_index = start_index + config["sample_count"]
+    labels_path = output_dirs["labels"] / "labels.csv"
+    reset_labels = not args.resume and not args.append_labels
+    ensure_labels_csv(labels_path, reset=reset_labels)
+    labeled_sample_ids = read_labeled_sample_ids(labels_path)
+    completed_count = 0
+    skipped_count = 0
 
     print(f"Resolved output dir: {resolved_output_dir}")
 
-    for index in range(1, config["sample_count"] + 1):
+    for skipped_index in range(1, start_index):
+        generate_body_parameters(skipped_index, rng, config)
+
+    for index in range(start_index, end_index):
         params = generate_body_parameters(index, rng, config)
         if config.get("anatomy", {}).get("enable_body_shape_adjustments", False):
             params = apply_body_shape_adjustments(params)
+        front_path = output_dirs["front"] / f"{params['sample_id']}_front.png"
+        side_path = output_dirs["side"] / f"{params['sample_id']}_side.png"
+
+        resume_action = resume_action_for_sample(params["sample_id"], front_path, side_path, labeled_sample_ids)
+        if args.resume and resume_action in {"skip", "checkpoint_existing_pair"}:
+            row = label_row_for_sample(params, config, front_path, side_path, resume_render_metadata(config))
+            if resume_action == "checkpoint_existing_pair":
+                append_label_row(labels_path, row)
+                labeled_sample_ids.add(params["sample_id"])
+                completed_count += 1
+                print(f"Checkpointed existing rendered pair: {params['sample_id']}")
+            else:
+                skipped_count += 1
+                print(f"Skipping completed sample: {params['sample_id']}")
+            continue
+
         clear_scene(bpy)
         setup_world_background(bpy, config)
         setup_render_quality(bpy, config)
         material = create_material(bpy, f"{params['sample_id']}_skin", params["skin_tone"])
         render_metadata = create_body_from_config(bpy, params, config, material)
         setup_lighting(bpy, config, rng)
-
-        front_path = output_dirs["front"] / f"{params['sample_id']}_front.png"
-        side_path = output_dirs["side"] / f"{params['sample_id']}_side.png"
 
         front_camera = setup_camera(bpy, "front", config["camera_distance"], config["camera_focal_length"])
         if render_metadata.get("objects") and (config.get("camera") or {}).get("auto_frame_body", False):
@@ -139,50 +162,16 @@ def main() -> None:
             )
         render_view(bpy, side_path, config["image_width"], config["image_height"])
 
-        rows.append(
-            {
-                "sample_id": params["sample_id"],
-                "front_image_path": repo_relative_path(front_path),
-                "side_image_path": repo_relative_path(side_path),
-                "height_cm": params["height_cm"],
-                "weight_kg": params["weight_kg"],
-                "chest_cm": params["chest_cm"],
-                "waist_cm": params["waist_cm"],
-                "hip_cm": params["hip_cm"],
-                "shoulder_cm": params["shoulder_cm"],
-                "inseam_cm": params["inseam_cm"],
-                "sleeve_cm": params["sleeve_cm"],
-                "neck_cm": params["neck_cm"],
-                "thigh_cm": params["thigh_cm"],
-                "calf_cm": params["calf_cm"],
-                "body_shape": params["body_shape"],
-                "generator_version": config["generator_version"],
-                "skin_tone_id": params["skin_tone_id"],
-                "pose_variation_degrees": params["pose_variation_degrees"],
-                "camera_distance": config["camera_distance"],
-                "camera_focal_length": config["camera_focal_length"],
-                "render_width": config["image_width"],
-                "render_height": config["image_height"],
-                "anatomy_version": config.get("generator_version", GENERATOR_VERSION),
-                "renderer_mode": render_metadata["renderer_mode"],
-                "base_mesh_asset": render_metadata["base_mesh_asset"],
-                "mesh_deformation_enabled": render_metadata["mesh_deformation_enabled"],
-                "fallback_used": render_metadata["fallback_used"],
-                "deformation_mode": render_metadata["deformation_mode"],
-                "deformation_strength": render_metadata["deformation_strength"],
-                "preserve_height": render_metadata["preserve_height"],
-                "auto_frame_body": render_metadata["auto_frame_body"],
-                "camera_margin": render_metadata["camera_margin"],
-                "rigging_enabled": render_metadata["rigging_enabled"],
-                "armature_detected": render_metadata["armature_detected"],
-                "shape_keys_detected": render_metadata["shape_keys_detected"],
-                "deformation_applied": render_metadata["deformation_applied"],
-                "shape_key_matches": render_metadata["shape_key_matches"],
-            }
-        )
+        row = label_row_for_sample(params, config, front_path, side_path, render_metadata)
+        if params["sample_id"] not in labeled_sample_ids:
+            append_label_row(labels_path, row)
+            labeled_sample_ids.add(params["sample_id"])
+        completed_count += 1
 
-    write_labels_csv(rows, output_dirs["labels"] / "labels.csv")
-    print(f"Rendered {len(rows)} procedural body samples to {resolved_output_dir}")
+    print(
+        f"Rendered or checkpointed {completed_count} samples to {resolved_output_dir}; "
+        f"skipped {skipped_count} completed samples."
+    )
 
 
 def load_config(config_path: str) -> dict:
@@ -195,6 +184,78 @@ def apply_cli_overrides(config: dict, args: argparse.Namespace) -> None:
         config["output_dir"] = args.output
     if args.num_samples is not None:
         config["sample_count"] = args.num_samples
+
+
+def label_row_for_sample(params: dict, config: dict, front_path: Path, side_path: Path, render_metadata: dict) -> dict:
+    return {
+        "sample_id": params["sample_id"],
+        "front_image_path": repo_relative_path(front_path),
+        "side_image_path": repo_relative_path(side_path),
+        "height_cm": params["height_cm"],
+        "weight_kg": params["weight_kg"],
+        "chest_cm": params["chest_cm"],
+        "waist_cm": params["waist_cm"],
+        "hip_cm": params["hip_cm"],
+        "shoulder_cm": params["shoulder_cm"],
+        "inseam_cm": params["inseam_cm"],
+        "sleeve_cm": params["sleeve_cm"],
+        "neck_cm": params["neck_cm"],
+        "thigh_cm": params["thigh_cm"],
+        "calf_cm": params["calf_cm"],
+        "body_shape": params["body_shape"],
+        "generator_version": config["generator_version"],
+        "skin_tone_id": params["skin_tone_id"],
+        "pose_variation_degrees": params["pose_variation_degrees"],
+        "camera_distance": config["camera_distance"],
+        "camera_focal_length": config["camera_focal_length"],
+        "render_width": config["image_width"],
+        "render_height": config["image_height"],
+        "anatomy_version": config.get("generator_version", GENERATOR_VERSION),
+        "renderer_mode": render_metadata["renderer_mode"],
+        "base_mesh_asset": render_metadata["base_mesh_asset"],
+        "mesh_deformation_enabled": render_metadata["mesh_deformation_enabled"],
+        "fallback_used": render_metadata["fallback_used"],
+        "deformation_mode": render_metadata["deformation_mode"],
+        "deformation_strength": render_metadata["deformation_strength"],
+        "preserve_height": render_metadata["preserve_height"],
+        "auto_frame_body": render_metadata["auto_frame_body"],
+        "camera_margin": render_metadata["camera_margin"],
+        "rigging_enabled": render_metadata["rigging_enabled"],
+        "armature_detected": render_metadata["armature_detected"],
+        "shape_keys_detected": render_metadata["shape_keys_detected"],
+        "deformation_applied": render_metadata["deformation_applied"],
+        "shape_key_matches": render_metadata["shape_key_matches"],
+    }
+
+
+def resume_render_metadata(config: dict) -> dict[str, object]:
+    base_mesh = config.get("base_mesh") or {}
+    mesh_deformation = config.get("mesh_deformation") or {}
+    rigging = config.get("rigging") or {}
+    return {
+        "renderer_mode": "resume_existing_render",
+        "base_mesh_asset": base_mesh.get("asset_path", ""),
+        "mesh_deformation_enabled": bool(mesh_deformation.get("enabled", False)),
+        "fallback_used": "",
+        "deformation_mode": mesh_deformation.get("mode", ""),
+        "deformation_strength": mesh_deformation.get("strength", ""),
+        "preserve_height": bool(mesh_deformation.get("preserve_height", False)),
+        "auto_frame_body": bool((config.get("camera") or {}).get("auto_frame_body", False)),
+        "camera_margin": (config.get("camera") or {}).get("margin", ""),
+        "rigging_enabled": bool(rigging.get("enabled", False)),
+        "armature_detected": "",
+        "shape_keys_detected": "",
+        "deformation_applied": "",
+        "shape_key_matches": "",
+    }
+
+
+def resume_action_for_sample(sample_id: str, front_path: Path, side_path: Path, labeled_sample_ids: set[str]) -> str:
+    if front_path.exists() and side_path.exists():
+        if sample_id in labeled_sample_ids:
+            return "skip"
+        return "checkpoint_existing_pair"
+    return "render"
 
 
 def resolve_output_dir(output_dir: str) -> Path:
@@ -1002,12 +1063,41 @@ def render_view(bpy, output_path: Path, width: int, height: int) -> None:
     bpy.ops.render.render(write_still=True)
 
 
-def write_labels_csv(rows: list[dict], labels_csv_path: Path) -> None:
-    labels_csv_path.parent.mkdir(parents=True, exist_ok=True)
-    with labels_csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+def write_labels_csv(rows: list[dict], labels_csv_path: Path, append: bool = False) -> None:
+    ensure_labels_csv(labels_csv_path, reset=not append)
+    with labels_csv_path.open("a", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=LABEL_COLUMNS)
-        writer.writeheader()
         writer.writerows(rows)
+        csv_file.flush()
+        os.fsync(csv_file.fileno())
+
+
+def ensure_labels_csv(labels_csv_path: Path, reset: bool = False) -> None:
+    labels_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    if reset or not labels_csv_path.exists() or labels_csv_path.stat().st_size == 0:
+        with labels_csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=LABEL_COLUMNS)
+            writer.writeheader()
+            csv_file.flush()
+            os.fsync(csv_file.fileno())
+
+
+def append_label_row(labels_csv_path: Path, row: dict) -> None:
+    ensure_labels_csv(labels_csv_path, reset=False)
+    with labels_csv_path.open("a", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=LABEL_COLUMNS)
+        writer.writerow(row)
+        csv_file.flush()
+        os.fsync(csv_file.fileno())
+
+
+def read_labeled_sample_ids(labels_csv_path: Path) -> set[str]:
+    if not labels_csv_path.exists() or labels_csv_path.stat().st_size == 0:
+        return set()
+
+    with labels_csv_path.open("r", newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        return {row["sample_id"] for row in reader if row.get("sample_id")}
 
 
 def _body_dimensions(params: dict) -> dict[str, float]:
@@ -1063,12 +1153,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", required=True)
     parser.add_argument("--output")
     parser.add_argument("--num-samples", type=int)
+    parser.add_argument("--start-index", type=int, default=1)
+    parser.add_argument("--append-labels", action="store_true")
+    parser.add_argument("--resume", action="store_true")
     argv = sys.argv
     if "--" in argv:
         argv = argv[argv.index("--") + 1 :]
     else:
         argv = argv[1:]
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.start_index < 1:
+        parser.error("--start-index must be at least 1")
+    return args
 
 
 if __name__ == "__main__":
