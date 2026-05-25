@@ -206,11 +206,14 @@ def feature_target_correlations(feature_matrix: np.ndarray, target_matrix: np.nd
 def pearson_correlation(first_values: np.ndarray, second_values: np.ndarray) -> float:
     if len(first_values) != len(second_values) or len(first_values) < 2:
         return 0.0
-    first_std = float(np.std(first_values))
-    second_std = float(np.std(second_values))
+    first_centered = first_values - float(np.mean(first_values))
+    second_centered = second_values - float(np.mean(second_values))
+    first_std = float(np.sqrt(np.mean(first_centered**2)))
+    second_std = float(np.sqrt(np.mean(second_centered**2)))
     if first_std <= NEAR_CONSTANT_STD_THRESHOLD or second_std <= NEAR_CONSTANT_STD_THRESHOLD:
         return 0.0
-    return float(np.corrcoef(first_values, second_values)[0, 1])
+    covariance = float(np.mean(first_centered * second_centered))
+    return covariance / (first_std * second_std)
 
 
 def feature_group(feature_name: str) -> str:

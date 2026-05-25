@@ -263,11 +263,14 @@ def rank_features_by_train_correlation(feature_matrix: np.ndarray, target_values
 def pearson_correlation(first_values: np.ndarray, second_values: np.ndarray) -> float:
     if len(first_values) != len(second_values) or len(first_values) < 2:
         return 0.0
-    first_std = float(np.std(first_values))
-    second_std = float(np.std(second_values))
+    first_centered = first_values - float(np.mean(first_values))
+    second_centered = second_values - float(np.mean(second_values))
+    first_std = float(np.sqrt(np.mean(first_centered**2)))
+    second_std = float(np.sqrt(np.mean(second_centered**2)))
     if first_std <= 1e-9 or second_std <= 1e-9:
         return 0.0
-    return float(np.corrcoef(first_values, second_values)[0, 1])
+    covariance = float(np.mean(first_centered * second_centered))
+    return covariance / (first_std * second_std)
 
 
 def fit_single_target_ridge(feature_matrix: np.ndarray, target_values: np.ndarray, ridge_alpha: float) -> dict[str, Any]:
