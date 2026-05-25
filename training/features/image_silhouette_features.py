@@ -6,6 +6,13 @@ from typing import Any
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
+FEATURE_EXTRACTOR_VERSION = "silhouette_geometry_v2"
+TORSO_REGION = (0.24, 0.62)
+LOWER_LEG_REGION = (0.78, 0.94)
+UPPER_BODY_REGION = (0.18, 0.38)
+VOLUME_BANDS = ("neck", "shoulder", "chest", "waist", "hip", "thigh", "calf")
+TORSO_VOLUME_BANDS = ("shoulder", "upper_chest", "chest", "mid_torso", "waist", "hip")
+LOWER_BODY_VOLUME_BANDS = ("upper_thigh", "thigh", "knee", "calf", "ankle")
 BAND_DEFINITIONS = [
     ("head", 0.10),
     ("neck", 0.18),
@@ -48,6 +55,52 @@ BASE_FEATURE_SUFFIXES = [
     "right_extension_ratio",
     "left_right_extension_delta",
 ]
+GEOMETRY_FEATURE_SUFFIXES = [
+    "area_to_height_ratio",
+    "area_to_bbox_area_ratio",
+    "torso_area_ratio",
+    "torso_integrated_width_ratio",
+    "lower_body_integrated_width_ratio",
+    "upper_body_max_width_ratio",
+    "upper_body_max_width_y_ratio",
+    "min_torso_width_ratio",
+    "min_torso_width_y_ratio",
+    "waist_min_torso_width_ratio",
+    "waist_to_chest_width_ratio",
+    "waist_to_hip_width_ratio",
+    "shoulder_peak_width_ratio",
+    "shoulder_peak_y_ratio",
+    "shoulder_to_hip_width_ratio",
+    "shoulder_peak_to_waist_width_ratio",
+    "shoulder_slope_proxy",
+    "neck_min_width_ratio",
+    "neck_min_width_y_ratio",
+    "neck_to_head_width_ratio",
+    "neck_to_shoulder_width_ratio",
+    "neck_head_transition_delta",
+    "lower_leg_max_width_ratio",
+    "lower_leg_max_width_y_ratio",
+    "lower_leg_min_width_ratio",
+    "calf_peak_width_ratio",
+    "calf_peak_y_ratio",
+    "calf_to_ankle_width_ratio",
+    "calf_to_thigh_width_ratio",
+]
+CROSS_VIEW_GEOMETRY_FEATURES = [
+    "front_side_area_product_proxy",
+    "front_side_integrated_volume_proxy",
+    "front_side_torso_volume_proxy",
+    "front_side_lower_body_volume_proxy",
+    "front_side_area_to_height_proxy",
+    "front_side_waist_width_depth_proxy",
+    "front_side_chest_width_depth_proxy",
+    "front_side_hip_width_depth_proxy",
+    "front_side_shoulder_width_depth_proxy",
+    "front_side_neck_width_depth_proxy",
+    "front_side_calf_width_depth_proxy",
+    "front_side_min_torso_width_depth_proxy",
+    "front_side_lower_leg_width_depth_proxy",
+]
 
 
 def get_feature_names() -> list[str]:
@@ -69,6 +122,7 @@ def get_feature_names() -> list[str]:
                 f"{prefix}_upper_thigh_to_waist_width_ratio",
             ]
         )
+        names.extend(f"{prefix}_{suffix}" for suffix in GEOMETRY_FEATURE_SUFFIXES)
     names.extend(
         [
             "front_to_side_bbox_height_ratio",
@@ -76,6 +130,7 @@ def get_feature_names() -> list[str]:
             "front_to_side_area_ratio",
         ]
     )
+    names.extend(CROSS_VIEW_GEOMETRY_FEATURES)
     return names
 
 
@@ -95,6 +150,7 @@ def extract_front_side_features(front_image_path: str | Path, side_image_path: s
         features["front_foreground_area_ratio"],
         features["side_foreground_area_ratio"],
     )
+    features.update(extract_cross_view_geometry_features(features))
     return {name: float(features[name]) for name in get_feature_names()}
 
 
@@ -161,6 +217,19 @@ def extract_mask_features(mask: np.ndarray, prefix: str) -> dict[str, float]:
     calf_width = _band_width_ratio(mask, _band_center("calf"))
     upper_thigh_width = _band_width_ratio(mask, _band_center("upper_thigh"))
     arm_span_width = _body_band_width_ratio(mask, 0.18, 0.58)
+    torso_area = _region_area(mask, *TORSO_REGION)
+    torso_integrated_width = _region_mean_width_ratio(mask, *TORSO_REGION)
+    lower_body_integrated_width = _region_mean_width_ratio(mask, 0.62, 0.96)
+    upper_body_max_width, upper_body_max_y = _region_extreme_width(mask, *UPPER_BODY_REGION, mode="max")
+    min_torso_width, min_torso_y = _region_extreme_width(mask, *TORSO_REGION, mode="min")
+    lower_leg_max_width, lower_leg_max_y = _region_extreme_width(mask, *LOWER_LEG_REGION, mode="max")
+    lower_leg_min_width, _lower_leg_min_y = _region_extreme_width(mask, *LOWER_LEG_REGION, mode="min")
+    calf_peak_width, calf_peak_y = _region_extreme_width(mask, 0.82, 0.91, mode="max")
+    shoulder_peak_width, shoulder_peak_y = _region_extreme_width(mask, 0.20, 0.30, mode="max")
+    neck_min_width, neck_min_y = _region_extreme_width(mask, 0.13, 0.23, mode="min")
+    head_width = _band_width_ratio(mask, _band_center("head"))
+    neck_width = _band_width_ratio(mask, _band_center("neck"))
+    ankle_width = _band_width_ratio(mask, _band_center("ankle"))
 
     features = {
         f"{prefix}_image_width_px": float(image_width),
@@ -188,6 +257,35 @@ def extract_mask_features(mask: np.ndarray, prefix: str) -> dict[str, float]:
         f"{prefix}_left_extension_ratio": max(0.0, (arm_span_width - chest_width) / 2),
         f"{prefix}_right_extension_ratio": max(0.0, (arm_span_width - chest_width) / 2),
         f"{prefix}_left_right_extension_delta": 0.0,
+        f"{prefix}_area_to_height_ratio": _safe_ratio(foreground_area / float(image_width * image_height), bbox_height / float(image_height)),
+        f"{prefix}_area_to_bbox_area_ratio": _safe_ratio(foreground_area, bbox_width * bbox_height),
+        f"{prefix}_torso_area_ratio": torso_area / float(image_width * image_height),
+        f"{prefix}_torso_integrated_width_ratio": torso_integrated_width,
+        f"{prefix}_lower_body_integrated_width_ratio": lower_body_integrated_width,
+        f"{prefix}_upper_body_max_width_ratio": upper_body_max_width,
+        f"{prefix}_upper_body_max_width_y_ratio": upper_body_max_y,
+        f"{prefix}_min_torso_width_ratio": min_torso_width,
+        f"{prefix}_min_torso_width_y_ratio": min_torso_y,
+        f"{prefix}_waist_min_torso_width_ratio": _safe_ratio(waist_width, min_torso_width),
+        f"{prefix}_waist_to_chest_width_ratio": _safe_ratio(waist_width, chest_width),
+        f"{prefix}_waist_to_hip_width_ratio": _safe_ratio(waist_width, hip_width),
+        f"{prefix}_shoulder_peak_width_ratio": shoulder_peak_width,
+        f"{prefix}_shoulder_peak_y_ratio": shoulder_peak_y,
+        f"{prefix}_shoulder_to_hip_width_ratio": _safe_ratio(shoulder_width, hip_width),
+        f"{prefix}_shoulder_peak_to_waist_width_ratio": _safe_ratio(shoulder_peak_width, waist_width),
+        f"{prefix}_shoulder_slope_proxy": abs(shoulder_width - upper_body_max_width),
+        f"{prefix}_neck_min_width_ratio": neck_min_width,
+        f"{prefix}_neck_min_width_y_ratio": neck_min_y,
+        f"{prefix}_neck_to_head_width_ratio": _safe_ratio(neck_width, head_width),
+        f"{prefix}_neck_to_shoulder_width_ratio": _safe_ratio(neck_width, shoulder_width),
+        f"{prefix}_neck_head_transition_delta": head_width - neck_width,
+        f"{prefix}_lower_leg_max_width_ratio": lower_leg_max_width,
+        f"{prefix}_lower_leg_max_width_y_ratio": lower_leg_max_y,
+        f"{prefix}_lower_leg_min_width_ratio": lower_leg_min_width,
+        f"{prefix}_calf_peak_width_ratio": calf_peak_width,
+        f"{prefix}_calf_peak_y_ratio": calf_peak_y,
+        f"{prefix}_calf_to_ankle_width_ratio": _safe_ratio(calf_width, ankle_width),
+        f"{prefix}_calf_to_thigh_width_ratio": _safe_ratio(calf_width, thigh_width),
     }
     for band_name, center in BAND_DEFINITIONS:
         features[f"{prefix}_{band_name}_width_ratio"] = _band_width_ratio(mask, center)
@@ -210,6 +308,27 @@ def foreground_bounding_box(mask: np.ndarray) -> tuple[int, int, int, int]:
     if len(xs) == 0 or len(ys) == 0:
         raise ValueError("Foreground mask is empty.")
     return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+
+
+def extract_cross_view_geometry_features(features: dict[str, float]) -> dict[str, float]:
+    cross_features = {
+        "front_side_area_product_proxy": features["front_foreground_area_ratio"] * features["side_foreground_area_ratio"],
+        "front_side_integrated_volume_proxy": _band_volume_proxy(features, VOLUME_BANDS),
+        "front_side_torso_volume_proxy": _band_volume_proxy(features, TORSO_VOLUME_BANDS),
+        "front_side_lower_body_volume_proxy": _band_volume_proxy(features, LOWER_BODY_VOLUME_BANDS),
+        "front_side_area_to_height_proxy": (
+            features["front_area_to_height_ratio"] * features["side_area_to_height_ratio"]
+        ),
+        "front_side_waist_width_depth_proxy": features["front_waist_width_ratio"] * features["side_waist_width_ratio"],
+        "front_side_chest_width_depth_proxy": features["front_chest_width_ratio"] * features["side_chest_width_ratio"],
+        "front_side_hip_width_depth_proxy": features["front_hip_width_ratio"] * features["side_hip_width_ratio"],
+        "front_side_shoulder_width_depth_proxy": features["front_shoulder_width_ratio"] * features["side_shoulder_width_ratio"],
+        "front_side_neck_width_depth_proxy": features["front_neck_width_ratio"] * features["side_neck_width_ratio"],
+        "front_side_calf_width_depth_proxy": features["front_calf_width_ratio"] * features["side_calf_width_ratio"],
+        "front_side_min_torso_width_depth_proxy": features["front_min_torso_width_ratio"] * features["side_min_torso_width_ratio"],
+        "front_side_lower_leg_width_depth_proxy": features["front_lower_leg_max_width_ratio"] * features["side_lower_leg_max_width_ratio"],
+    }
+    return cross_features
 
 
 def feature_vector(features: dict[str, Any], feature_names: list[str] | None = None) -> list[float]:
@@ -256,6 +375,60 @@ def _body_band_width_ratio(mask: np.ndarray, start_ratio: float, end_ratio: floa
     if len(occupied_columns) == 0:
         return 0.0
     return (int(occupied_columns.max()) - int(occupied_columns.min()) + 1) / float(image_width)
+
+
+def _region_area(mask: np.ndarray, start_ratio: float, end_ratio: float) -> float:
+    image_height = mask.shape[0]
+    y_start, y_end = _region_bounds(image_height, start_ratio, end_ratio)
+    return float(mask[y_start:y_end, :].sum())
+
+
+def _region_mean_width_ratio(mask: np.ndarray, start_ratio: float, end_ratio: float) -> float:
+    image_height, image_width = mask.shape
+    y_start, y_end = _region_bounds(image_height, start_ratio, end_ratio)
+    row_widths = _row_widths(mask[y_start:y_end, :])
+    nonzero_widths = row_widths[row_widths > 0]
+    if len(nonzero_widths) == 0:
+        return 0.0
+    return float(nonzero_widths.mean()) / float(image_width)
+
+
+def _region_extreme_width(mask: np.ndarray, start_ratio: float, end_ratio: float, mode: str) -> tuple[float, float]:
+    image_height, image_width = mask.shape
+    y_start, y_end = _region_bounds(image_height, start_ratio, end_ratio)
+    row_widths = _row_widths(mask)
+    region_widths = row_widths[y_start:y_end]
+    occupied_indices = np.where(region_widths > 0)[0]
+    if len(occupied_indices) == 0:
+        return 0.0, 0.0
+
+    occupied_widths = region_widths[occupied_indices]
+    if mode == "max":
+        local_index = int(occupied_indices[int(np.argmax(occupied_widths))])
+    elif mode == "min":
+        local_index = int(occupied_indices[int(np.argmin(occupied_widths))])
+    else:
+        raise ValueError(f"Unsupported width mode: {mode}")
+    y_index = y_start + local_index
+    return float(row_widths[y_index]) / float(image_width), y_index / float(image_height)
+
+
+def _region_bounds(image_height: int, start_ratio: float, end_ratio: float) -> tuple[int, int]:
+    y_start = max(0, int(round(start_ratio * image_height)))
+    y_end = min(image_height, int(round(end_ratio * image_height)))
+    if y_end <= y_start:
+        y_end = min(image_height, y_start + 1)
+    return y_start, y_end
+
+
+def _band_volume_proxy(features: dict[str, float], band_names: tuple[str, ...]) -> float:
+    values = [
+        features[f"front_{band_name}_width_ratio"] * features[f"side_{band_name}_width_ratio"]
+        for band_name in band_names
+    ]
+    if not values:
+        return 0.0
+    return sum(values) / len(values)
 
 
 def _row_widths(mask: np.ndarray) -> np.ndarray:

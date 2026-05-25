@@ -37,6 +37,7 @@ from training.experiments.analyze_feature_importance import (
     rank_negative_values,
     rank_positive_values,
 )
+from training.features.image_silhouette_features import FEATURE_EXTRACTOR_VERSION
 
 
 def test_prediction_rows_contain_true_pred_and_error_columns() -> None:
@@ -301,7 +302,7 @@ def test_config_contains_dataset_targets_and_model_settings(tmp_path, monkeypatc
     assert config["target_columns"] == TARGET_COLUMNS
     assert config["feature_count"] > 0
     assert config["feature_extractor"]["name"] == "image_silhouette_features"
-    assert config["feature_extractor"]["version"] == "phase_2p"
+    assert config["feature_extractor"]["version"] == FEATURE_EXTRACTOR_VERSION
     assert config["model"]["type"] == "ridge"
     assert config["model"]["artifact_type"] == MODEL_TYPE
     assert config["model"]["regression_method"] == "ridge_regression"

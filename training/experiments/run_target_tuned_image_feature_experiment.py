@@ -22,7 +22,6 @@ from training.train_image_feature_baseline import _target_matrix, extract_sample
 from training.experiments.run_image_feature_experiment import (
     CONFIG_FILENAME,
     FEATURE_EXTRACTOR_NAME,
-    FEATURE_EXTRACTOR_VERSION,
     FEATURE_NAMES_FILENAME,
     METRICS_FILENAME,
     PER_TARGET_ERRORS_FILENAME,
@@ -31,6 +30,7 @@ from training.experiments.run_image_feature_experiment import (
     calculate_per_target_errors,
     write_prediction_csv,
 )
+from training.features.image_silhouette_features import FEATURE_EXTRACTOR_VERSION
 
 SELECTED_HYPERPARAMETERS_FILENAME = "selected_hyperparameters.json"
 MODEL_TYPE = "image_silhouette_target_tuned_ridge_regressor"

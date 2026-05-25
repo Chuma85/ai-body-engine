@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 
 from training.datasets.synthetic_body_dataset import SyntheticBodyDataset
-from training.features.image_silhouette_features import get_feature_names
+from training.features.image_silhouette_features import FEATURE_EXTRACTOR_VERSION, get_feature_names
 from training.train_baseline_measurements import (
     MODEL_FILENAME,
     TARGET_COLUMNS,
@@ -36,7 +36,6 @@ PREDICTION_FILENAMES = {
 METRICS_FILENAME = "metrics.json"
 MODEL_TYPE = "image_silhouette_ridge_regressor"
 FEATURE_EXTRACTOR_NAME = "image_silhouette_features"
-FEATURE_EXTRACTOR_VERSION = "phase_2p"
 EXPERIMENT_RUNNER_VERSION = "phase_2t"
 SUPPORTED_MODEL_TYPES = ("mean", "ridge", "knn")
 DEFAULT_MODEL_TYPE = "ridge"

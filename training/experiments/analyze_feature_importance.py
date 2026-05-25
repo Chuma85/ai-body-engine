@@ -214,6 +214,20 @@ def pearson_correlation(first_values: np.ndarray, second_values: np.ndarray) -> 
 
 
 def feature_group(feature_name: str) -> str:
+    if "volume_proxy" in feature_name or "width_depth_proxy" in feature_name:
+        return "volume_proxy"
+    if "integrated_width" in feature_name:
+        return "integrated_profile"
+    if "area_to_height" in feature_name or "area_to_bbox" in feature_name:
+        return "area_scale_ratio"
+    if "min_torso" in feature_name or "waist_min" in feature_name:
+        return "torso_waist_geometry"
+    if "shoulder_peak" in feature_name or "shoulder_slope" in feature_name:
+        return "shoulder_geometry"
+    if "neck_" in feature_name or "neck_to" in feature_name:
+        return "neck_geometry"
+    if "calf_" in feature_name or "lower_leg" in feature_name:
+        return "lower_leg_geometry"
     if feature_name.startswith("front_to_side"):
         return "cross_view_ratio"
     if "arm_span" in feature_name or "extension" in feature_name:

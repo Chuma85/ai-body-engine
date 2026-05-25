@@ -9,7 +9,10 @@ import pytest
 from synthetic.blender.scripts.render_parametric_body import LABEL_COLUMNS
 from synthetic.build_dataset_manifest import build_dataset_manifest
 from training.features.image_silhouette_features import (
+    CROSS_VIEW_GEOMETRY_FEATURES,
+    FEATURE_EXTRACTOR_VERSION,
     create_foreground_mask,
+    extract_cross_view_geometry_features,
     extract_front_side_features,
     extract_image_features,
     extract_mask_features,
@@ -59,12 +62,18 @@ def test_feature_vector_has_stable_names_and_order(tmp_path) -> None:
         "front_foreground_area_ratio",
         "front_bbox_width_px",
     ]
-    assert names[-2:] == ["front_to_side_bbox_width_ratio", "front_to_side_area_ratio"]
+    assert names[-len(CROSS_VIEW_GEOMETRY_FEATURES):] == CROSS_VIEW_GEOMETRY_FEATURES
     assert "front_body_top_y_ratio" in names
     assert "front_shoulder_to_waist_width_ratio" in names
     assert "front_thigh_to_height_ratio" in names
+    assert "front_area_to_height_ratio" in names
+    assert "front_waist_min_torso_width_ratio" in names
+    assert "front_neck_to_shoulder_width_ratio" in names
+    assert "front_calf_to_ankle_width_ratio" in names
     assert "side_hip_center_x_ratio" in names
     assert "front_to_side_bbox_height_ratio" in names
+    assert "front_side_torso_volume_proxy" in names
+    assert FEATURE_EXTRACTOR_VERSION == "silhouette_geometry_v2"
     assert len(vector) == len(names)
     assert vector == feature_vector(features, names)
 
@@ -85,6 +94,55 @@ def test_tiny_mask_profile_features_are_deterministic() -> None:
     assert features["front_thigh_width_ratio"] == 11 / 50
     assert features["front_shoulder_to_waist_width_ratio"] == pytest.approx((21 / 50) / (15 / 50))
     assert features["front_thigh_to_height_ratio"] == pytest.approx((11 / 50) / (81 / 100))
+    assert features["front_shoulder_peak_width_ratio"] == pytest.approx(21 / 50)
+    assert features["front_neck_min_width_ratio"] == pytest.approx(11 / 50)
+    assert features["front_calf_peak_width_ratio"] == pytest.approx(11 / 50)
+    assert features["front_calf_to_ankle_width_ratio"] == 0.0
+
+
+def test_geometry_volume_proxy_features_are_deterministic() -> None:
+    front_mask = np.zeros((100, 50), dtype=bool)
+    side_mask = np.zeros((100, 50), dtype=bool)
+    front_mask[10:91, 20:31] = True
+    side_mask[10:91, 22:28] = True
+
+    features = {
+        **extract_mask_features(front_mask, "front"),
+        **extract_mask_features(side_mask, "side"),
+    }
+    cross_features = extract_cross_view_geometry_features(features)
+
+    expected_front_width = 11 / 50
+    expected_side_width = 6 / 50
+    expected_proxy = expected_front_width * expected_side_width
+    assert features["front_area_to_height_ratio"] == pytest.approx((891 / 5000) / 0.81)
+    assert features["front_torso_integrated_width_ratio"] == pytest.approx(expected_front_width)
+    assert cross_features["front_side_integrated_volume_proxy"] == pytest.approx(expected_proxy)
+    assert cross_features["front_side_torso_volume_proxy"] == pytest.approx(expected_proxy)
+    assert cross_features["front_side_lower_body_volume_proxy"] == pytest.approx(expected_proxy * 4 / 5)
+
+
+def test_neck_shoulder_and_calf_geometry_features_on_simple_mask() -> None:
+    mask = np.zeros((100, 50), dtype=bool)
+    mask[10:15, 19:32] = True
+    mask[18:22, 22:29] = True
+    mask[24:29, 14:37] = True
+    mask[48:51, 18:33] = True
+    mask[60:64, 16:35] = True
+    mask[74:77, 20:31] = True
+    mask[86:89, 21:30] = True
+    mask[94:96, 23:28] = True
+
+    features = extract_mask_features(mask, "front")
+
+    assert features["front_neck_min_width_ratio"] == pytest.approx(7 / 50)
+    assert features["front_neck_to_head_width_ratio"] == pytest.approx((7 / 50) / (13 / 50))
+    assert features["front_neck_to_shoulder_width_ratio"] == pytest.approx((7 / 50) / (23 / 50))
+    assert features["front_shoulder_peak_width_ratio"] == pytest.approx(23 / 50)
+    assert features["front_shoulder_to_hip_width_ratio"] == pytest.approx((23 / 50) / (19 / 50))
+    assert features["front_calf_peak_width_ratio"] == pytest.approx(9 / 50)
+    assert features["front_calf_to_ankle_width_ratio"] == pytest.approx((9 / 50) / (5 / 50))
+    assert features["front_calf_to_thigh_width_ratio"] == pytest.approx((9 / 50) / (11 / 50))
 
 
 def test_empty_foreground_mask_raises_clear_error() -> None:
