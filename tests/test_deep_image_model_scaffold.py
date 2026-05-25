@@ -42,6 +42,81 @@ def test_load_normalized_image_resizes_and_channels_first(tmp_path) -> None:
     assert 0.0 <= float(array.min()) <= float(array.max()) <= 1.0
 
 
+def test_augmentation_disabled_is_deterministic(tmp_path) -> None:
+    image_path = tmp_path / "body.png"
+    _write_rect_image(image_path, rect=(2, 2, 7, 8), size=(10, 12))
+
+    first = load_normalized_image(image_path, image_size=16)
+    second = load_normalized_image(image_path, image_size=16)
+
+    assert np.array_equal(first, second)
+
+
+def test_train_augmentation_is_seed_reproducible_and_changes_images(tmp_path) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+    plain_dataset = SyntheticBodyImageDataset(dataset_root, split="train", image_size=32)
+    augmented_a = SyntheticBodyImageDataset(
+        dataset_root,
+        split="train",
+        image_size=32,
+        augment=True,
+        brightness_jitter=0.2,
+        contrast_jitter=0.2,
+        shift_pixels=3,
+        noise_std=0.01,
+        augment_seed=123,
+    )
+    augmented_b = SyntheticBodyImageDataset(
+        dataset_root,
+        split="train",
+        image_size=32,
+        augment=True,
+        brightness_jitter=0.2,
+        contrast_jitter=0.2,
+        shift_pixels=3,
+        noise_std=0.01,
+        augment_seed=123,
+    )
+
+    plain = plain_dataset[0]["front_image"]
+    first = augmented_a[0]["front_image"]
+    second = augmented_b[0]["front_image"]
+
+    assert np.array_equal(first, second)
+    assert not np.array_equal(plain, first)
+
+
+def test_validation_and_test_ignore_training_augmentation(tmp_path) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+    plain_val = SyntheticBodyImageDataset(dataset_root, split="val", image_size=32)
+    augmented_val = SyntheticBodyImageDataset(
+        dataset_root,
+        split="val",
+        image_size=32,
+        augment=True,
+        brightness_jitter=0.5,
+        contrast_jitter=0.5,
+        shift_pixels=4,
+        noise_std=0.05,
+        augment_seed=999,
+    )
+    plain_test = SyntheticBodyImageDataset(dataset_root, split="test", image_size=32)
+    augmented_test = SyntheticBodyImageDataset(
+        dataset_root,
+        split="test",
+        image_size=32,
+        augment=True,
+        brightness_jitter=0.5,
+        contrast_jitter=0.5,
+        shift_pixels=4,
+        noise_std=0.05,
+        augment_seed=999,
+    )
+
+    assert np.array_equal(plain_val[0]["front_image"], augmented_val[0]["front_image"])
+    assert np.array_equal(plain_test[0]["side_image"], augmented_test[0]["side_image"])
+
+
 def test_deep_dataset_adapter_split_and_target_vector(tmp_path) -> None:
     dataset_root = _write_dataset(tmp_path, 20)
 
@@ -278,6 +353,15 @@ def test_tiny_dual_branch_training_records_model_config_if_torch_available(tmp_p
             "2",
             "--dropout",
             "0.1",
+            "--augment",
+            "--brightness-jitter",
+            "0.05",
+            "--contrast-jitter",
+            "0.05",
+            "--shift-pixels",
+            "2",
+            "--noise-std",
+            "0.01",
         ],
         capture_output=True,
         text=True,
@@ -298,9 +382,16 @@ def test_tiny_dual_branch_training_records_model_config_if_torch_available(tmp_p
     assert config["target_count"] == len(TARGET_COLUMNS)
     assert config["model"]["hyperparameters"]["shared_encoder"] is False
     assert config["model"]["hyperparameters"]["dropout"] == pytest.approx(0.1)
+    assert config["augmentation"]["enabled"] is True
+    assert config["augmentation"]["train_only"] is True
+    assert config["augmentation"]["brightness_jitter"] == pytest.approx(0.05)
+    assert config["augmentation"]["contrast_jitter"] == pytest.approx(0.05)
+    assert config["augmentation"]["shift_pixels"] == 2
+    assert config["augmentation"]["noise_std"] == pytest.approx(0.01)
     assert metrics["model_type"] == "dual_branch_cnn"
     assert metrics["shared_encoder"] is False
     assert metrics["target_count"] == len(TARGET_COLUMNS)
+    assert metrics["augmentation"]["enabled"] is True
 
 
 def _write_dataset(tmp_path: Path, count: int) -> Path:

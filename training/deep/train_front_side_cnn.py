@@ -27,7 +27,7 @@ MODEL_CHOICES = (SIMPLE_MODEL_CHOICE, DUAL_BRANCH_MODEL_CHOICE)
 MODEL_TYPE = "simple_front_side_cnn"
 DUAL_BRANCH_MODEL_TYPE = "dual_branch_cnn"
 MODEL_FAMILY = "front_side_cnn"
-EXPERIMENT_RUNNER_VERSION = "phase_3e"
+EXPERIMENT_RUNNER_VERSION = "phase_3f"
 PREDICTION_FILENAMES = {
     "train": "predictions_train.csv",
     "val": "predictions_val.csv",
@@ -52,6 +52,12 @@ def train_front_side_cnn(
     model_type: str = SIMPLE_MODEL_CHOICE,
     shared_encoder: bool | None = None,
     dropout: float = 0.2,
+    augment: bool = False,
+    brightness_jitter: float = 0.0,
+    contrast_jitter: float = 0.0,
+    shift_pixels: int = 0,
+    noise_std: float = 0.0,
+    horizontal_flip_prob: float = 0.0,
 ) -> dict[str, Any]:
     torch = import_torch()
     if epochs <= 0:
@@ -64,13 +70,35 @@ def train_front_side_cnn(
         raise ValueError("weight_decay must be non-negative.")
     if not 0.0 <= dropout < 1.0:
         raise ValueError("dropout must be greater than or equal to 0.0 and less than 1.0.")
+    augmentation_settings = build_augmentation_settings(
+        augment=augment,
+        brightness_jitter=brightness_jitter,
+        contrast_jitter=contrast_jitter,
+        shift_pixels=shift_pixels,
+        noise_std=noise_std,
+        horizontal_flip_prob=horizontal_flip_prob,
+        augment_seed=seed,
+    )
     set_training_seed(seed)
 
     dataset_path = Path(dataset_root)
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset root does not exist: {dataset_path}")
 
-    train_dataset = SyntheticBodyImageDataset(dataset_path, split="train", image_size=image_size, as_tensors=True, limit_samples=limit_samples)
+    train_dataset = SyntheticBodyImageDataset(
+        dataset_path,
+        split="train",
+        image_size=image_size,
+        as_tensors=True,
+        limit_samples=limit_samples,
+        augment=augment,
+        brightness_jitter=brightness_jitter,
+        contrast_jitter=contrast_jitter,
+        shift_pixels=shift_pixels,
+        noise_std=noise_std,
+        horizontal_flip_prob=horizontal_flip_prob,
+        augment_seed=seed,
+    )
     val_dataset = SyntheticBodyImageDataset(dataset_path, split="val", image_size=image_size, as_tensors=True, limit_samples=limit_samples)
     test_dataset = SyntheticBodyImageDataset(dataset_path, split="test", image_size=image_size, as_tensors=True, limit_samples=limit_samples)
     if len(train_dataset) < 2 or len(val_dataset) < 1 or len(test_dataset) < 1:
@@ -148,6 +176,7 @@ def train_front_side_cnn(
         "best_val_overall_mae": best_val_mae,
         "early_stopping_triggered": early_stopping_triggered,
         "target_normalization_enabled": target_normalization_enabled,
+        "augmentation": augmentation_settings,
         "image_size": image_size,
         "limit_samples": limit_samples,
         "device": str(torch_device),
@@ -179,6 +208,7 @@ def train_front_side_cnn(
         len(epoch_metrics),
         early_stopping_triggered,
         model_settings,
+        augmentation_settings,
     )
 
     output_path = Path(output_dir)
@@ -211,6 +241,7 @@ def train_front_side_cnn(
             "model_choice": model_settings["model_choice"],
             "shared_encoder": model_settings["shared_encoder"],
             "dropout": model_settings["dropout"],
+            "augmentation": augmentation_settings,
         },
         model_path,
     )
@@ -223,6 +254,37 @@ def train_front_side_cnn(
         "model_path": str(model_path),
         "prediction_paths": prediction_paths,
         "metrics": metrics,
+    }
+
+
+def build_augmentation_settings(
+    augment: bool,
+    brightness_jitter: float,
+    contrast_jitter: float,
+    shift_pixels: int,
+    noise_std: float,
+    horizontal_flip_prob: float,
+    augment_seed: int,
+) -> dict[str, Any]:
+    if brightness_jitter < 0.0:
+        raise ValueError("brightness_jitter must be non-negative.")
+    if contrast_jitter < 0.0:
+        raise ValueError("contrast_jitter must be non-negative.")
+    if shift_pixels < 0:
+        raise ValueError("shift_pixels must be non-negative.")
+    if noise_std < 0.0:
+        raise ValueError("noise_std must be non-negative.")
+    if not 0.0 <= horizontal_flip_prob <= 1.0:
+        raise ValueError("horizontal_flip_prob must be between 0.0 and 1.0.")
+    return {
+        "enabled": augment,
+        "train_only": True,
+        "brightness_jitter": brightness_jitter,
+        "contrast_jitter": contrast_jitter,
+        "shift_pixels": shift_pixels,
+        "noise_std": noise_std,
+        "horizontal_flip_prob": horizontal_flip_prob,
+        "augment_seed": augment_seed,
     }
 
 
@@ -439,6 +501,7 @@ def build_config(
     epochs_completed: int,
     early_stopping_triggered: bool,
     model_settings: dict[str, Any],
+    augmentation_settings: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "dataset": str(dataset_root),
@@ -459,6 +522,7 @@ def build_config(
             "target_mean": target_mean.cpu().numpy().tolist(),
             "target_std": target_std.cpu().numpy().tolist(),
         },
+        "augmentation": augmentation_settings,
         "best_epoch": best_epoch,
         "epochs_completed": epochs_completed,
         "early_stopping_triggered": early_stopping_triggered,
@@ -482,6 +546,7 @@ def build_config(
                 "shared_encoder": model_settings["shared_encoder"],
                 "dropout": model_settings["dropout"],
                 "target_count": len(TARGET_COLUMNS),
+                "augmentation": augmentation_settings,
             },
         },
         "experiment_runner_version": EXPERIMENT_RUNNER_VERSION,
@@ -538,6 +603,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", choices=MODEL_CHOICES, default=SIMPLE_MODEL_CHOICE)
     parser.add_argument("--shared-encoder", action="store_true", default=None)
     parser.add_argument("--dropout", type=float, default=0.2)
+    parser.add_argument("--augment", action="store_true")
+    parser.add_argument("--brightness-jitter", type=float, default=0.0)
+    parser.add_argument("--contrast-jitter", type=float, default=0.0)
+    parser.add_argument("--shift-pixels", type=int, default=0)
+    parser.add_argument("--noise-std", type=float, default=0.0)
+    parser.add_argument("--horizontal-flip-prob", type=float, default=0.0)
     args = parser.parse_args(argv)
 
     try:
@@ -558,6 +629,12 @@ def main(argv: list[str] | None = None) -> int:
             model_type=args.model,
             shared_encoder=args.shared_encoder,
             dropout=args.dropout,
+            augment=args.augment,
+            brightness_jitter=args.brightness_jitter,
+            contrast_jitter=args.contrast_jitter,
+            shift_pixels=args.shift_pixels,
+            noise_std=args.noise_std,
+            horizontal_flip_prob=args.horizontal_flip_prob,
         )
     except DeepLearningDependencyError as error:
         print(str(error), file=sys.stderr)
