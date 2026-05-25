@@ -18,6 +18,16 @@ from training.experiments.run_image_feature_experiment import (
     run_image_feature_experiment,
 )
 from training.experiments.compare_image_feature_models import compare_image_feature_models
+from training.experiments.analyze_target_diagnostics import (
+    analyze_target_diagnostics,
+    calculate_target_diagnostics,
+    percent_mae,
+    signed_bias,
+    worst_sample_rows,
+)
+from training.experiments.run_target_tuned_image_feature_experiment import (
+    run_target_tuned_image_feature_experiment,
+)
 
 
 def test_prediction_rows_contain_true_pred_and_error_columns() -> None:
@@ -66,6 +76,37 @@ def test_per_target_errors_are_calculated_correctly() -> None:
     assert errors["weight_kg"]["mae"] == 5.0
 
 
+def test_target_diagnostics_percent_mae_and_signed_bias() -> None:
+    rows = [
+        {"true_height_cm": "100.0", "pred_height_cm": "110.0", "abs_error_height_cm": "10.0"},
+        {"true_height_cm": "200.0", "pred_height_cm": "180.0", "abs_error_height_cm": "20.0"},
+    ]
+
+    diagnostics = calculate_target_diagnostics(rows, "height_cm")
+
+    assert percent_mae(15.0, 150.0) == 10.0
+    assert signed_bias([10.0, -20.0]) == -5.0
+    assert diagnostics["mae"] == 15.0
+    assert diagnostics["mean_true"] == 150.0
+    assert diagnostics["mae_percent_of_mean_true"] == 10.0
+    assert diagnostics["signed_error_mean"] == -5.0
+    assert diagnostics["underprediction_count"] == 1
+    assert diagnostics["overprediction_count"] == 1
+
+
+def test_worst_sample_extraction_orders_by_absolute_error() -> None:
+    rows = [
+        {"sample_id": "a", "split": "test", "true_height_cm": "100", "pred_height_cm": "104", "abs_error_height_cm": "4"},
+        {"sample_id": "b", "split": "test", "true_height_cm": "100", "pred_height_cm": "112", "abs_error_height_cm": "12"},
+        {"sample_id": "c", "split": "test", "true_height_cm": "100", "pred_height_cm": "108", "abs_error_height_cm": "8"},
+    ]
+
+    worst_rows = worst_sample_rows(rows, ["height_cm"], limit_per_target=2)
+
+    assert [row["sample_id"] for row in worst_rows] == ["b", "c"]
+    assert worst_rows[0]["signed_error"] == 12.0
+
+
 def test_tiny_fixture_experiment_creates_complete_outputs(tmp_path, monkeypatch) -> None:
     dataset_root = _write_dataset(tmp_path, 20)
     output_dir = tmp_path / "artifacts" / "experiments" / "phase_2s"
@@ -92,6 +133,57 @@ def test_tiny_fixture_experiment_creates_complete_outputs(tmp_path, monkeypatch)
     assert metrics["feature_count"] > 0
     assert "overall_mae" in metrics["test"]
     assert result["metrics"]["test"]["overall_mae"] == metrics["test"]["overall_mae"]
+
+
+def test_target_diagnostics_report_is_created(tmp_path, monkeypatch) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+    experiment_dir = tmp_path / "artifacts" / "experiments" / "phase_2w_source"
+    output_dir = tmp_path / "artifacts" / "analysis" / "phase_2w_diagnostics"
+    monkeypatch.chdir(tmp_path)
+    run_image_feature_experiment(dataset_root, experiment_dir)
+
+    result = analyze_target_diagnostics(experiment_dir, output_dir)
+
+    assert Path(result["summary_path"]).exists()
+    assert Path(result["report_path"]).exists()
+    assert Path(result["worst_samples_path"]).exists()
+    assert "height_cm" in result["summary"]["per_target"]
+    assert result["summary"]["hardest_targets"]
+
+
+def test_target_diagnostics_missing_predictions_raise_helpful_error(tmp_path) -> None:
+    experiment_dir = tmp_path / "experiment"
+    experiment_dir.mkdir()
+    (experiment_dir / "metrics.json").write_text(json.dumps({"target_columns": ["height_cm"]}), encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="Missing prediction CSV"):
+        analyze_target_diagnostics(experiment_dir, tmp_path / "analysis")
+
+
+def test_target_tuned_experiment_runs_and_writes_outputs(tmp_path, monkeypatch) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+    output_dir = tmp_path / "artifacts" / "experiments" / "phase_2w_tuned"
+    monkeypatch.chdir(tmp_path)
+
+    result = run_target_tuned_image_feature_experiment(dataset_root, output_dir, alpha_grid=[0.1, 1.0])
+
+    expected_files = [
+        "config.json",
+        "metrics.json",
+        "model.json",
+        "feature_names.json",
+        "per_target_errors.json",
+        "predictions_train.csv",
+        "predictions_val.csv",
+        "predictions_test.csv",
+        "selected_hyperparameters.json",
+    ]
+    for filename in expected_files:
+        assert (output_dir / filename).exists()
+    selected = json.loads((output_dir / "selected_hyperparameters.json").read_text(encoding="utf-8"))
+    assert set(selected) == set(TARGET_COLUMNS)
+    assert set(selected.values()) <= {0.1, 1.0}
+    assert result["metrics"]["model_family"] == "target_tuned_ridge"
 
 
 def test_prediction_csv_has_expected_columns_and_rows(tmp_path, monkeypatch) -> None:
