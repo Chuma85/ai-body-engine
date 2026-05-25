@@ -28,6 +28,15 @@ from training.experiments.analyze_target_diagnostics import (
 from training.experiments.run_target_tuned_image_feature_experiment import (
     run_target_tuned_image_feature_experiment,
 )
+from training.experiments.analyze_feature_importance import (
+    analyze_feature_importance,
+    dominant_feature_warning,
+    feature_group,
+    near_constant_feature_names,
+    rank_absolute_values,
+    rank_negative_values,
+    rank_positive_values,
+)
 
 
 def test_prediction_rows_contain_true_pred_and_error_columns() -> None:
@@ -107,6 +116,38 @@ def test_worst_sample_extraction_orders_by_absolute_error() -> None:
     assert worst_rows[0]["signed_error"] == 12.0
 
 
+def test_feature_importance_coefficient_rankings() -> None:
+    values = np.asarray([0.2, -2.0, 1.5, -0.1])
+
+    assert rank_positive_values(values, 2) == [2, 0]
+    assert rank_negative_values(values, 2) == [1, 3]
+    assert rank_absolute_values(values, 2) == [1, 2]
+
+
+def test_feature_group_detection_from_feature_names() -> None:
+    assert feature_group("front_bbox_height_ratio") == "bbox_scale_position"
+    assert feature_group("side_waist_width_ratio") == "band_width_profile"
+    assert feature_group("front_arm_span_to_torso_ratio") == "arm_span_extension"
+    assert feature_group("front_thigh_to_height_ratio") == "height_normalized_ratio"
+    assert feature_group("front_to_side_area_ratio") == "cross_view_ratio"
+
+
+def test_near_constant_feature_detection() -> None:
+    names = ["constant_feature", "variable_feature"]
+    stds = np.asarray([0.0, 0.25])
+
+    assert near_constant_feature_names(names, stds) == ["constant_feature"]
+
+
+def test_low_signal_and_dominant_feature_warning_logic() -> None:
+    coefficients = np.asarray([9.0, 1.0, 0.0])
+
+    warning = dominant_feature_warning("weight_kg", ["front_bbox_height_ratio", "side_waist_width_ratio", "front_area"], coefficients)
+
+    assert warning is not None
+    assert "Dominant feature" in warning
+
+
 def test_tiny_fixture_experiment_creates_complete_outputs(tmp_path, monkeypatch) -> None:
     dataset_root = _write_dataset(tmp_path, 20)
     output_dir = tmp_path / "artifacts" / "experiments" / "phase_2s"
@@ -149,6 +190,32 @@ def test_target_diagnostics_report_is_created(tmp_path, monkeypatch) -> None:
     assert Path(result["worst_samples_path"]).exists()
     assert "height_cm" in result["summary"]["per_target"]
     assert result["summary"]["hardest_targets"]
+
+
+def test_feature_importance_report_and_csvs_are_created(tmp_path, monkeypatch) -> None:
+    dataset_root = _write_dataset(tmp_path, 20)
+    experiment_dir = tmp_path / "artifacts" / "experiments" / "phase_2x_source"
+    output_dir = tmp_path / "artifacts" / "analysis" / "phase_2x_features"
+    monkeypatch.chdir(tmp_path)
+    run_image_feature_experiment(dataset_root, experiment_dir)
+
+    result = analyze_feature_importance(experiment_dir, dataset_root, output_dir)
+
+    assert Path(result["summary_path"]).exists()
+    assert Path(result["report_path"]).exists()
+    assert Path(result["per_target_top_features_path"]).exists()
+    assert Path(result["feature_group_summary_path"]).exists()
+    assert result["summary"]["feature_count"] > 0
+    assert "height_cm" in result["summary"]["per_target"]
+    assert "band_width_profile" in {row["feature_group"] for row in result["summary"]["feature_groups"]}
+
+
+def test_feature_importance_missing_model_raises_helpful_error(tmp_path) -> None:
+    experiment_dir = tmp_path / "experiment"
+    experiment_dir.mkdir()
+
+    with pytest.raises(FileNotFoundError, match="Missing model.json"):
+        analyze_feature_importance(experiment_dir, tmp_path / "dataset", tmp_path / "analysis")
 
 
 def test_target_diagnostics_missing_predictions_raise_helpful_error(tmp_path) -> None:
