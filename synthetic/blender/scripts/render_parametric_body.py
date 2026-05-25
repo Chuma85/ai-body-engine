@@ -79,6 +79,10 @@ OPTIONAL_METADATA_COLUMNS = [
     "shape_keys_detected",
     "deformation_applied",
     "shape_key_matches",
+    "body_seed",
+    "render_seed",
+    "render_realism_enabled",
+    "render_realism_version",
 ]
 LABEL_COLUMNS = [
     "sample_id",
@@ -113,9 +117,11 @@ def main() -> None:
     config = load_config(args.config)
     apply_cli_overrides(config, args)
     apply_render_realism_resolution_override(config)
+    rng_seeds = resolved_rng_seeds(config)
     resolved_output_dir = resolve_output_dir(config["output_dir"])
     output_dirs = ensure_output_dirs(resolved_output_dir)
-    rng = random.Random(config["random_seed"])
+    body_rng = random.Random(rng_seeds["body_seed"])
+    render_rng = random.Random(rng_seeds["render_seed"])
     start_index = args.start_index
     end_index = start_index + config["sample_count"]
     labels_path = output_dirs["labels"] / "labels.csv"
@@ -126,12 +132,13 @@ def main() -> None:
     skipped_count = 0
 
     print(f"Resolved output dir: {resolved_output_dir}")
+    print(f"Using body_seed={rng_seeds['body_seed']} render_seed={rng_seeds['render_seed']}")
 
     for skipped_index in range(1, start_index):
-        generate_body_parameters(skipped_index, rng, config)
+        generate_body_parameters(skipped_index, body_rng, config)
 
     for index in range(start_index, end_index):
-        params = generate_body_parameters(index, rng, config)
+        params = generate_body_parameters(index, body_rng, config)
         if config.get("anatomy", {}).get("enable_body_shape_adjustments", False):
             params = apply_body_shape_adjustments(params)
         front_path = output_dirs["front"] / f"{params['sample_id']}_front.png"
@@ -151,13 +158,13 @@ def main() -> None:
             continue
 
         clear_scene(bpy)
-        setup_world_background(bpy, config, rng)
+        setup_world_background(bpy, config, render_rng)
         setup_render_quality(bpy, config)
-        material = create_material(bpy, f"{params['sample_id']}_skin", adjusted_skin_tone(params["skin_tone"], config, rng))
+        material = create_material(bpy, f"{params['sample_id']}_skin", adjusted_skin_tone(params["skin_tone"], config, render_rng))
         render_metadata = create_body_from_config(bpy, params, config, material)
-        setup_lighting(bpy, config, rng)
+        setup_lighting(bpy, config, render_rng)
 
-        front_camera_jitter = camera_jitter(config, rng)
+        front_camera_jitter = camera_jitter(config, render_rng)
         front_camera = setup_camera(bpy, "front", config["camera_distance"], config["camera_focal_length"], front_camera_jitter)
         if render_metadata.get("objects") and (config.get("camera") or {}).get("auto_frame_body", False):
             auto_frame_camera_to_objects(
@@ -174,7 +181,7 @@ def main() -> None:
             )
         render_view(bpy, front_path, config["image_width"], config["image_height"])
 
-        side_camera_jitter = camera_jitter(config, rng)
+        side_camera_jitter = camera_jitter(config, render_rng)
         side_camera = setup_camera(bpy, "side", config["camera_distance"], config["camera_focal_length"], side_camera_jitter)
         if render_metadata.get("objects") and (config.get("camera") or {}).get("auto_frame_body", False):
             auto_frame_camera_to_objects(
@@ -209,10 +216,23 @@ def load_config(config_path: str) -> dict:
 
 
 def apply_cli_overrides(config: dict, args: argparse.Namespace) -> None:
-    if args.output:
+    if getattr(args, "output", None):
         config["output_dir"] = args.output
-    if args.num_samples is not None:
+    if getattr(args, "num_samples", None) is not None:
         config["sample_count"] = args.num_samples
+    if getattr(args, "body_seed", None) is not None:
+        config["body_seed"] = args.body_seed
+    if getattr(args, "render_seed", None) is not None:
+        config["render_seed"] = args.render_seed
+
+
+def resolved_rng_seeds(config: dict) -> dict[str, int]:
+    legacy_seed = int(config.get("random_seed", 42))
+    return {
+        "body_seed": int(config.get("body_seed", legacy_seed)),
+        "render_seed": int(config.get("render_seed", legacy_seed)),
+        "legacy_random_seed": legacy_seed,
+    }
 
 
 def render_realism_controls(config: dict) -> dict:
@@ -277,6 +297,9 @@ def _deep_update(base: dict, updates: dict) -> dict:
 
 
 def label_row_for_sample(params: dict, config: dict, front_path: Path, side_path: Path, render_metadata: dict) -> dict:
+    rng_seeds = resolved_rng_seeds(config)
+    realism_controls = render_realism_controls(config)
+    render_realism_config = config.get("render_realism") or {}
     return {
         "sample_id": params["sample_id"],
         "front_image_path": repo_relative_path(front_path),
@@ -315,6 +338,10 @@ def label_row_for_sample(params: dict, config: dict, front_path: Path, side_path
         "shape_keys_detected": render_metadata["shape_keys_detected"],
         "deformation_applied": render_metadata["deformation_applied"],
         "shape_key_matches": render_metadata["shape_key_matches"],
+        "body_seed": rng_seeds["body_seed"],
+        "render_seed": rng_seeds["render_seed"],
+        "render_realism_enabled": bool(realism_controls["enabled"]),
+        "render_realism_version": render_realism_config.get("version", ""),
     }
 
 
@@ -1310,6 +1337,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-index", type=int, default=1)
     parser.add_argument("--append-labels", action="store_true")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--body-seed", type=int)
+    parser.add_argument("--render-seed", type=int)
     argv = sys.argv
     if "--" in argv:
         argv = argv[argv.index("--") + 1 :]

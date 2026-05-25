@@ -39,6 +39,10 @@ OPTIONAL_METADATA_COLUMNS = [
     "shape_keys_detected",
     "deformation_applied",
     "shape_key_matches",
+    "body_seed",
+    "render_seed",
+    "render_realism_enabled",
+    "render_realism_version",
 ]
 
 

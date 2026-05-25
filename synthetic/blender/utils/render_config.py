@@ -46,6 +46,8 @@ class RenderConfig:
     shape_key_mapping: dict[str, list[str]] | None = None
     variation_controls: dict[str, Any] | None = None
     render_realism: dict[str, Any] | None = None
+    body_seed: int | None = None
+    render_seed: int | None = None
 
 
 def load_render_config(path: str) -> RenderConfig:

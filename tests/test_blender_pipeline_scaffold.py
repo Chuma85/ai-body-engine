@@ -1,6 +1,7 @@
 from dataclasses import replace
 import csv
 import importlib
+import json
 import math
 import random
 from types import SimpleNamespace
@@ -26,6 +27,7 @@ PHASE_2F_CONFIG_PATH = "synthetic/blender/configs/phase_2f_mesh_variation_config
 PHASE_2G_CONFIG_PATH = "synthetic/blender/configs/phase_2g_rigged_mesh_config.example.json"
 PHASE_2V_CONFIG_PATH = "synthetic/blender/configs/phase_2v_controlled_variation_config.example.json"
 PHASE_3G_CONFIG_PATH = "synthetic/blender/configs/phase_3g_render_realism_config.example.json"
+PHASE_3K_CONFIG_PATH = "synthetic/blender/configs/phase_3k_rng_isolation_config.example.json"
 
 
 def test_example_render_config_loads_and_validates() -> None:
@@ -181,6 +183,9 @@ def test_optional_metadata_columns_exist_but_are_not_required() -> None:
     assert "fallback_used" in OPTIONAL_METADATA_COLUMNS
     assert "rigging_enabled" in OPTIONAL_METADATA_COLUMNS
     assert "shape_key_matches" in OPTIONAL_METADATA_COLUMNS
+    assert "body_seed" in OPTIONAL_METADATA_COLUMNS
+    assert "render_seed" in OPTIONAL_METADATA_COLUMNS
+    assert "render_realism_enabled" in OPTIONAL_METADATA_COLUMNS
     assert validate_measurement_row(row) is True
 
 
@@ -432,6 +437,36 @@ def test_phase_3g_render_realism_config_loads_and_validates() -> None:
     assert config.render_realism["camera"]["orthographic_scale_jitter_range"] == [1.0, 1.05]
 
 
+def test_phase_3k_rng_isolation_config_loads_and_validates() -> None:
+    config = load_render_config(PHASE_3K_CONFIG_PATH)
+
+    assert config.generator_version == "phase_3k_rng_isolation_v1"
+    assert config.body_seed == 42
+    assert config.render_seed == 314159
+    assert config.render_realism is not None
+    assert config.render_realism["enabled"] is True
+    assert config.render_realism["version"] == "phase_3k_render_realism_rng_v1"
+
+
+def test_rng_seed_resolution_is_backwards_compatible_with_random_seed() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+
+    seeds = module.resolved_rng_seeds({"random_seed": 123})
+
+    assert seeds["body_seed"] == 123
+    assert seeds["render_seed"] == 123
+    assert seeds["legacy_random_seed"] == 123
+
+
+def test_rng_seed_resolution_prefers_explicit_stream_seeds() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+
+    seeds = module.resolved_rng_seeds({"random_seed": 123, "body_seed": 7, "render_seed": 8})
+
+    assert seeds["body_seed"] == 7
+    assert seeds["render_seed"] == 8
+
+
 def test_render_realism_resolution_override_is_optional_and_compatible() -> None:
     module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
     config = {
@@ -519,6 +554,23 @@ def test_phase_3g_label_row_format_remains_compatible() -> None:
     assert validate_measurement_row(row) is True
     assert row["render_width"] == 768
     assert row["render_height"] == 1024
+
+
+def test_phase_3k_label_row_includes_rng_metadata_and_remains_compatible() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    config = module.load_config(PHASE_3K_CONFIG_PATH)
+    front_path = module.repo_root() / "data" / "synthetic" / "phase_3k_smoke_a" / "images" / "front" / "sample_000001_front.png"
+    side_path = module.repo_root() / "data" / "synthetic" / "phase_3k_smoke_a" / "images" / "side" / "sample_000001_side.png"
+    params = module.generate_body_parameters(1, random.Random(config["body_seed"]), config)
+
+    row = module.label_row_for_sample(params, config, front_path, side_path, module.resume_render_metadata(config))
+
+    assert set(row) == set(module.LABEL_COLUMNS)
+    assert validate_measurement_row(row) is True
+    assert row["body_seed"] == 42
+    assert row["render_seed"] == 314159
+    assert row["render_realism_enabled"] is True
+    assert row["render_realism_version"] == "phase_3k_render_realism_rng_v1"
 
 
 def test_deformation_math_clamps_and_normalizes_values() -> None:
@@ -613,6 +665,19 @@ def test_phase_2i_cli_overrides_output_and_sample_count() -> None:
 
     assert config["output_dir"] == "data/synthetic/phase_2i"
     assert config["sample_count"] == 2
+
+
+def test_phase_3k_cli_overrides_rng_seeds() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    config = {"output_dir": "data/synthetic/phase_3k_smoke_a", "sample_count": 5, "random_seed": 42}
+
+    module.apply_cli_overrides(
+        config,
+        SimpleNamespace(output=None, num_samples=None, body_seed=101, render_seed=202),
+    )
+
+    assert config["body_seed"] == 101
+    assert config["render_seed"] == 202
 
 
 def test_phase_2v_batch_label_writer_can_append(tmp_path) -> None:
@@ -719,6 +784,38 @@ def test_phase_2v_batch_rng_matches_single_pass_sequence() -> None:
     batch_sample = module.generate_body_parameters(5, batch_rng, config)
 
     assert batch_sample == single_pass[-1]
+
+
+def test_phase_3k_changing_render_seed_does_not_change_body_measurements() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    config_a = module.load_config(PHASE_3K_CONFIG_PATH)
+    config_b = json.loads(json.dumps(config_a))
+    config_b["render_seed"] = int(config_b["render_seed"]) + 1
+    body_rng_a = random.Random(module.resolved_rng_seeds(config_a)["body_seed"])
+    body_rng_b = random.Random(module.resolved_rng_seeds(config_b)["body_seed"])
+
+    params_a = [module.generate_body_parameters(index, body_rng_a, config_a) for index in range(1, 6)]
+    params_b = [module.generate_body_parameters(index, body_rng_b, config_b) for index in range(1, 6)]
+
+    assert [_measurement_values(params) for params in params_a] == [_measurement_values(params) for params in params_b]
+
+
+def test_phase_3k_changing_body_seed_changes_body_measurements() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    config_a = module.load_config(PHASE_3K_CONFIG_PATH)
+    config_b = json.loads(json.dumps(config_a))
+    config_b["body_seed"] = int(config_b["body_seed"]) + 1
+    body_rng_a = random.Random(module.resolved_rng_seeds(config_a)["body_seed"])
+    body_rng_b = random.Random(module.resolved_rng_seeds(config_b)["body_seed"])
+
+    params_a = [module.generate_body_parameters(index, body_rng_a, config_a) for index in range(1, 6)]
+    params_b = [module.generate_body_parameters(index, body_rng_b, config_b) for index in range(1, 6)]
+
+    assert [_measurement_values(params) for params in params_a] != [_measurement_values(params) for params in params_b]
+
+
+def _measurement_values(params: dict) -> tuple:
+    return tuple(params[column] for column in REQUIRED_MEASUREMENT_COLUMNS if column in params)
 
 
 def test_validate_mock_phase_2c_dataset(tmp_path) -> None:
