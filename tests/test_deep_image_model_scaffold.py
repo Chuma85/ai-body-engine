@@ -18,8 +18,16 @@ from training.deep.synthetic_body_image_dataset import (
     load_normalized_image,
     target_vector,
 )
-from training.deep.train_front_side_cnn import main, train_front_side_cnn
-from training.deep.train_front_side_cnn import calculate_metrics_from_errors, calculate_per_target_errors
+from training.deep.train_front_side_cnn import (
+    best_epoch_from_history,
+    calculate_metrics_from_errors,
+    calculate_per_target_errors,
+    inverse_transform_targets,
+    main,
+    normalize_targets,
+    should_stop_early,
+    train_front_side_cnn,
+)
 
 
 def test_load_normalized_image_resizes_and_channels_first(tmp_path) -> None:
@@ -107,6 +115,30 @@ def test_deep_per_target_metrics_are_calculated() -> None:
     assert per_target["height_cm"]["max_abs_error"] == 3.0
 
 
+def test_target_normalization_and_inverse_transform_are_consistent() -> None:
+    targets = np.asarray([[10.0, 20.0], [14.0, 28.0]], dtype=np.float32)
+    target_mean = np.asarray([12.0, 24.0], dtype=np.float32)
+    target_std = np.asarray([2.0, 4.0], dtype=np.float32)
+
+    normalized = normalize_targets(targets, target_mean, target_std)
+    restored = inverse_transform_targets(normalized, target_mean, target_std)
+
+    assert normalized.tolist() == [[-1.0, -1.0], [1.0, 1.0]]
+    assert restored.tolist() == targets.tolist()
+
+
+def test_early_stopping_helpers_select_best_epoch() -> None:
+    history = [
+        {"epoch": 1, "val_overall_mae": 9.5},
+        {"epoch": 2, "val_overall_mae": 9.2},
+        {"epoch": 3, "val_overall_mae": 9.3},
+    ]
+
+    assert best_epoch_from_history(history) == 2
+    assert should_stop_early(epochs_without_improvement=2, patience=2) is True
+    assert should_stop_early(epochs_without_improvement=2, patience=0) is False
+
+
 def test_tiny_smoke_training_if_torch_available(tmp_path, monkeypatch) -> None:
     if importlib.util.find_spec("torch") is None:
         pytest.skip("PyTorch is not installed.")
@@ -131,6 +163,8 @@ def test_tiny_smoke_training_if_torch_available(tmp_path, monkeypatch) -> None:
             "32",
             "--batch-size",
             "4",
+            "--patience",
+            "2",
         ],
         capture_output=True,
         text=True,
@@ -148,8 +182,18 @@ def test_tiny_smoke_training_if_torch_available(tmp_path, monkeypatch) -> None:
     assert (output_dir / "predictions_test.csv").exists()
     metrics = json.loads((output_dir / "metrics.json").read_text(encoding="utf-8"))
     assert metrics["sample_counts"] == {"train": 8, "val": 2, "test": 2}
+    assert "best_epoch" in metrics
+    assert "best_val_overall_mae" in metrics
+    assert "epochs_completed" in metrics
+    assert "early_stopping_triggered" in metrics
+    assert metrics["target_normalization_enabled"] is True
     assert "overall_mae" in metrics["val"]
     assert "overall_mae" in metrics["test"]
+    config = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
+    assert config["target_normalization"]["enabled"] is True
+    assert config["patience"] == 2
+    assert config["seed"] == 42
+    assert config["best_epoch"] == metrics["best_epoch"]
     with (output_dir / "predictions_test.csv").open("r", newline="", encoding="utf-8") as predictions_file:
         rows = list(csv.DictReader(predictions_file))
     assert len(rows) == 2
@@ -158,6 +202,7 @@ def test_tiny_smoke_training_if_torch_available(tmp_path, monkeypatch) -> None:
     assert f"true_{TARGET_COLUMNS[0]}" in rows[0]
     assert f"pred_{TARGET_COLUMNS[0]}" in rows[0]
     assert f"abs_error_{TARGET_COLUMNS[0]}" in rows[0]
+    assert float(rows[0][f"true_{TARGET_COLUMNS[0]}"]) > 100.0
 
 
 def _write_dataset(tmp_path: Path, count: int) -> Path:

@@ -22,7 +22,7 @@ PER_TARGET_ERRORS_FILENAME = "per_target_errors.json"
 TARGET_NAMES_FILENAME = "target_names.json"
 MODEL_TYPE = "simple_front_side_cnn"
 MODEL_FAMILY = "front_side_cnn"
-EXPERIMENT_RUNNER_VERSION = "phase_3b"
+EXPERIMENT_RUNNER_VERSION = "phase_3c"
 PREDICTION_FILENAMES = {
     "train": "predictions_train.csv",
     "val": "predictions_val.csv",
@@ -41,12 +41,19 @@ def train_front_side_cnn(
     seed: int = 42,
     device: str = "cpu",
     save_predictions: bool = True,
+    patience: int = 3,
+    weight_decay: float = 0.0,
+    target_normalization_enabled: bool = True,
 ) -> dict[str, Any]:
     torch = import_torch()
     if epochs <= 0:
         raise ValueError("epochs must be a positive integer.")
     if batch_size <= 0:
         raise ValueError("batch_size must be a positive integer.")
+    if patience < 0:
+        raise ValueError("patience must be a non-negative integer.")
+    if weight_decay < 0:
+        raise ValueError("weight_decay must be non-negative.")
     set_training_seed(seed)
 
     dataset_path = Path(dataset_root)
@@ -65,25 +72,44 @@ def train_front_side_cnn(
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, generator=generator)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-    target_mean, target_std = target_normalization(train_dataset)
+    target_mean, target_std = target_normalization(train_dataset, enabled=target_normalization_enabled)
 
     model = SimpleFrontSideCNN(target_count=len(TARGET_COLUMNS)).to(torch_device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     loss_fn = torch.nn.MSELoss()
 
     epoch_metrics = []
+    best_state_dict: dict[str, Any] | None = None
+    best_val_mae = float("inf")
+    best_epoch = 0
+    epochs_without_improvement = 0
+    early_stopping_triggered = False
     for epoch in range(1, epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, loss_fn, target_mean, target_std, torch_device)
         train_eval = evaluate_predictions(model, train_loader, target_mean, target_std, torch_device)
         val_eval = evaluate_predictions(model, val_loader, target_mean, target_std, torch_device)
+        val_mae = float(val_eval["metrics"]["overall_mae"])
         epoch_metrics.append(
             {
                 "epoch": epoch,
                 "train_loss": train_loss,
                 "train_overall_mae": train_eval["metrics"]["overall_mae"],
-                "val_overall_mae": val_eval["metrics"]["overall_mae"],
+                "val_overall_mae": val_mae,
             }
         )
+        if is_improved(val_mae, best_val_mae):
+            best_val_mae = val_mae
+            best_epoch = epoch
+            epochs_without_improvement = 0
+            best_state_dict = clone_model_state_dict(model)
+        else:
+            epochs_without_improvement += 1
+            if should_stop_early(epochs_without_improvement, patience):
+                early_stopping_triggered = True
+                break
+
+    if best_state_dict is not None:
+        model.load_state_dict(best_state_dict)
 
     evaluations = {
         "train": evaluate_predictions(model, train_loader, target_mean, target_std, torch_device),
@@ -97,6 +123,11 @@ def train_front_side_cnn(
         "target_names": list(TARGET_COLUMNS),
         "sample_counts": {"train": len(train_dataset), "val": len(val_dataset), "test": len(test_dataset)},
         "epochs": epochs,
+        "epochs_completed": len(epoch_metrics),
+        "best_epoch": best_epoch,
+        "best_val_overall_mae": best_val_mae,
+        "early_stopping_triggered": early_stopping_triggered,
+        "target_normalization_enabled": target_normalization_enabled,
         "image_size": image_size,
         "limit_samples": limit_samples,
         "device": str(torch_device),
@@ -109,7 +140,25 @@ def train_front_side_cnn(
         split: calculate_per_target_errors(evaluation["prediction_rows"])
         for split, evaluation in evaluations.items()
     }
-    config = build_config(dataset_path, epochs, limit_samples, image_size, batch_size, learning_rate, seed, str(torch_device), save_predictions)
+    config = build_config(
+        dataset_path,
+        epochs,
+        limit_samples,
+        image_size,
+        batch_size,
+        learning_rate,
+        seed,
+        str(torch_device),
+        save_predictions,
+        patience,
+        weight_decay,
+        target_normalization_enabled,
+        target_mean,
+        target_std,
+        best_epoch,
+        len(epoch_metrics),
+        early_stopping_triggered,
+    )
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -134,6 +183,8 @@ def train_front_side_cnn(
             "target_columns": list(TARGET_COLUMNS),
             "target_mean": target_mean.cpu().numpy().tolist(),
             "target_std": target_std.cpu().numpy().tolist(),
+            "target_normalization_enabled": target_normalization_enabled,
+            "best_epoch": best_epoch,
             "config": config,
         },
         model_path,
@@ -157,6 +208,27 @@ def set_training_seed(seed: int) -> None:
     torch.manual_seed(seed)
 
 
+def is_improved(current_value: float, best_value: float, min_delta: float = 1e-6) -> bool:
+    return current_value < best_value - min_delta
+
+
+def should_stop_early(epochs_without_improvement: int, patience: int) -> bool:
+    return patience > 0 and epochs_without_improvement >= patience
+
+
+def best_epoch_from_history(epoch_metrics: list[dict[str, Any]]) -> int:
+    if not epoch_metrics:
+        return 0
+    return int(min(epoch_metrics, key=lambda row: float(row["val_overall_mae"]))["epoch"])
+
+
+def clone_model_state_dict(model: Any) -> dict[str, Any]:
+    return {
+        key: value.detach().cpu().clone()
+        for key, value in model.state_dict().items()
+    }
+
+
 def resolve_device(device: str) -> Any:
     torch = import_torch()
     if device not in {"cpu", "cuda", "auto"}:
@@ -168,9 +240,13 @@ def resolve_device(device: str) -> Any:
     return torch.device(device)
 
 
-def target_normalization(dataset: SyntheticBodyImageDataset) -> tuple[Any, Any]:
+def target_normalization(dataset: SyntheticBodyImageDataset, enabled: bool = True) -> tuple[Any, Any]:
     torch = import_torch()
     targets = torch.stack([dataset[index]["targets"] for index in range(len(dataset))])
+    if not enabled:
+        target_mean = torch.zeros(targets.shape[1], dtype=targets.dtype)
+        target_std = torch.ones(targets.shape[1], dtype=targets.dtype)
+        return target_mean, target_std
     target_mean = targets.mean(dim=0)
     target_std = targets.std(dim=0)
     target_std = torch.where(target_std < 1e-6, torch.ones_like(target_std), target_std)
@@ -184,7 +260,7 @@ def train_one_epoch(model: Any, loader: Any, optimizer: Any, loss_fn: Any, targe
         front_images = batch["front_image"].to(device)
         side_images = batch["side_image"].to(device)
         targets = batch["targets"].to(device)
-        normalized_targets = (targets - target_mean.to(device)) / target_std.to(device)
+        normalized_targets = normalize_targets(targets, target_mean.to(device), target_std.to(device))
 
         optimizer.zero_grad()
         predictions = model(front_images, side_images)
@@ -208,7 +284,7 @@ def evaluate_predictions(model: Any, loader: Any, target_mean: Any, target_std: 
             side_images = batch["side_image"].to(device)
             targets = batch["targets"].to(device)
             normalized_predictions = model(front_images, side_images)
-            predictions = normalized_predictions * target_std.to(device) + target_mean.to(device)
+            predictions = inverse_transform_targets(normalized_predictions, target_mean.to(device), target_std.to(device))
             prediction_rows.append(predictions.cpu())
             target_rows.append(targets.cpu())
             sample_ids.extend(str(sample_id) for sample_id in batch["sample_id"])
@@ -231,6 +307,14 @@ def calculate_metrics_from_errors(absolute_errors: np.ndarray) -> dict[str, Any]
         "overall_mae": float(np.mean(list(mae_by_target.values()))),
         "mae_by_target": mae_by_target,
     }
+
+
+def normalize_targets(targets: Any, target_mean: Any, target_std: Any) -> Any:
+    return (targets - target_mean) / target_std
+
+
+def inverse_transform_targets(normalized_targets: Any, target_mean: Any, target_std: Any) -> Any:
+    return normalized_targets * target_std + target_mean
 
 
 def build_prediction_rows(
@@ -295,6 +379,14 @@ def build_config(
     seed: int,
     device: str,
     save_predictions: bool,
+    patience: int,
+    weight_decay: float,
+    target_normalization_enabled: bool,
+    target_mean: Any,
+    target_std: Any,
+    best_epoch: int,
+    epochs_completed: int,
+    early_stopping_triggered: bool,
 ) -> dict[str, Any]:
     return {
         "dataset": str(dataset_root),
@@ -305,9 +397,19 @@ def build_config(
         "limit_samples": limit_samples,
         "batch_size": batch_size,
         "learning_rate": learning_rate,
+        "weight_decay": weight_decay,
+        "patience": patience,
         "seed": seed,
         "device": device,
         "save_predictions": save_predictions,
+        "target_normalization": {
+            "enabled": target_normalization_enabled,
+            "target_mean": target_mean.cpu().numpy().tolist(),
+            "target_std": target_std.cpu().numpy().tolist(),
+        },
+        "best_epoch": best_epoch,
+        "epochs_completed": epochs_completed,
+        "early_stopping_triggered": early_stopping_triggered,
         "model": {
             "type": MODEL_FAMILY,
             "artifact_type": MODEL_TYPE,
@@ -316,7 +418,9 @@ def build_config(
                 "image_size": image_size,
                 "batch_size": batch_size,
                 "learning_rate": learning_rate,
+                "weight_decay": weight_decay,
                 "epochs": epochs,
+                "patience": patience,
             },
         },
         "experiment_runner_version": EXPERIMENT_RUNNER_VERSION,
@@ -343,6 +447,7 @@ def format_training_report(result: dict[str, Any]) -> str:
             f"Model: {metrics['model_type']}",
             f"Samples: train={metrics['sample_counts']['train']} val={metrics['sample_counts']['val']}",
             f"test samples: {metrics['sample_counts']['test']}",
+            f"best epoch: {metrics['best_epoch']}",
             f"train overall MAE: {metrics['train']['overall_mae']:.4f}",
             f"val overall MAE: {metrics['val']['overall_mae']:.4f}",
             f"test overall MAE: {metrics['test']['overall_mae']:.4f}",
@@ -366,6 +471,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", choices=["cpu", "cuda", "auto"], default="cpu")
     parser.add_argument("--save-predictions", action="store_true", default=True)
+    parser.add_argument("--patience", type=int, default=3)
+    parser.add_argument("--weight-decay", type=float, default=0.0)
+    parser.add_argument("--disable-target-normalization", action="store_true")
     args = parser.parse_args(argv)
 
     try:
@@ -380,6 +488,9 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             device=args.device,
             save_predictions=args.save_predictions,
+            patience=args.patience,
+            weight_decay=args.weight_decay,
+            target_normalization_enabled=not args.disable_target_normalization,
         )
     except DeepLearningDependencyError as error:
         print(str(error), file=sys.stderr)
