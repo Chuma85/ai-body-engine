@@ -20,6 +20,7 @@ from training.deep.synthetic_body_image_dataset import (
 )
 from training.deep.train_front_side_cnn import (
     best_epoch_from_history,
+    build_front_side_model,
     calculate_metrics_from_errors,
     calculate_per_target_errors,
     inverse_transform_targets,
@@ -83,6 +84,48 @@ def test_model_output_shape_if_torch_available() -> None:
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
 
     assert result.returncode == 0, result.stderr
+
+
+def test_dual_branch_model_output_shape_if_torch_available() -> None:
+    if importlib.util.find_spec("torch") is None:
+        pytest.skip("PyTorch is not installed.")
+
+    code = (
+        "import torch; "
+        "from training.deep.models.dual_branch_cnn import DualBranchCNN; "
+        f"model = DualBranchCNN(target_count={len(TARGET_COLUMNS)}, shared_encoder=False, dropout=0.1); "
+        "front = torch.zeros((2, 3, 32, 32), dtype=torch.float32); "
+        "side = torch.zeros((2, 3, 32, 32), dtype=torch.float32); "
+        "output = model(front, side); "
+        "assert tuple(output.shape) == (2, 11)"
+    )
+
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_dual_branch_encoder_modes_if_torch_available() -> None:
+    if importlib.util.find_spec("torch") is None:
+        pytest.skip("PyTorch is not installed.")
+
+    code = (
+        "from training.deep.train_front_side_cnn import build_front_side_model; "
+        f"target_count = {len(TARGET_COLUMNS)}; "
+        "separate_model = build_front_side_model('dual_branch_cnn', target_count, False, 0.2); "
+        "shared_model = build_front_side_model('dual_branch_cnn', target_count, True, 0.2); "
+        "assert separate_model.front_encoder is not separate_model.side_encoder; "
+        "assert shared_model.front_encoder is shared_model.side_encoder"
+    )
+
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_invalid_deep_model_type_raises_clear_error() -> None:
+    with pytest.raises(ValueError, match="Unknown model type"):
+        build_front_side_model(model_type="wide_cnn", target_count=len(TARGET_COLUMNS), shared_encoder=False, dropout=0.2)
 
 
 def test_cli_missing_dependency_behavior(monkeypatch, tmp_path, capsys) -> None:
@@ -203,6 +246,61 @@ def test_tiny_smoke_training_if_torch_available(tmp_path, monkeypatch) -> None:
     assert f"pred_{TARGET_COLUMNS[0]}" in rows[0]
     assert f"abs_error_{TARGET_COLUMNS[0]}" in rows[0]
     assert float(rows[0][f"true_{TARGET_COLUMNS[0]}"]) > 100.0
+
+
+def test_tiny_dual_branch_training_records_model_config_if_torch_available(tmp_path) -> None:
+    if importlib.util.find_spec("torch") is None:
+        pytest.skip("PyTorch is not installed.")
+    dataset_root = _write_dataset(tmp_path, 20)
+    output_dir = tmp_path / "artifacts" / "deep" / "phase_3e_dual_smoke"
+    repo_root = Path(__file__).resolve().parents[1]
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "training.deep.train_front_side_cnn",
+            "--dataset",
+            str(dataset_root),
+            "--output",
+            str(output_dir),
+            "--model",
+            "dual_branch_cnn",
+            "--epochs",
+            "1",
+            "--limit-samples",
+            "8",
+            "--image-size",
+            "32",
+            "--batch-size",
+            "4",
+            "--patience",
+            "2",
+            "--dropout",
+            "0.1",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (output_dir / "config.json").exists()
+    assert (output_dir / "metrics.json").exists()
+    assert (output_dir / "model.pt").exists()
+    assert (output_dir / "predictions_test.csv").exists()
+    config = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
+    metrics = json.loads((output_dir / "metrics.json").read_text(encoding="utf-8"))
+    assert config["model_type"] == "dual_branch_cnn"
+    assert config["model_choice"] == "dual_branch_cnn"
+    assert config["shared_encoder"] is False
+    assert config["dropout"] == pytest.approx(0.1)
+    assert config["target_count"] == len(TARGET_COLUMNS)
+    assert config["model"]["hyperparameters"]["shared_encoder"] is False
+    assert config["model"]["hyperparameters"]["dropout"] == pytest.approx(0.1)
+    assert metrics["model_type"] == "dual_branch_cnn"
+    assert metrics["shared_encoder"] is False
+    assert metrics["target_count"] == len(TARGET_COLUMNS)
 
 
 def _write_dataset(tmp_path: Path, count: int) -> Path:

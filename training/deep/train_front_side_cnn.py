@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 
 from training.deep.dependencies import DeepLearningDependencyError, import_torch
+from training.deep.models.dual_branch_cnn import DualBranchCNN
 from training.deep.models.simple_front_side_cnn import SimpleFrontSideCNN
 from training.deep.synthetic_body_image_dataset import TARGET_COLUMNS, SyntheticBodyImageDataset
 
@@ -20,9 +21,13 @@ METRICS_FILENAME = "metrics.json"
 MODEL_FILENAME = "model.pt"
 PER_TARGET_ERRORS_FILENAME = "per_target_errors.json"
 TARGET_NAMES_FILENAME = "target_names.json"
+SIMPLE_MODEL_CHOICE = "simple_cnn"
+DUAL_BRANCH_MODEL_CHOICE = "dual_branch_cnn"
+MODEL_CHOICES = (SIMPLE_MODEL_CHOICE, DUAL_BRANCH_MODEL_CHOICE)
 MODEL_TYPE = "simple_front_side_cnn"
+DUAL_BRANCH_MODEL_TYPE = "dual_branch_cnn"
 MODEL_FAMILY = "front_side_cnn"
-EXPERIMENT_RUNNER_VERSION = "phase_3c"
+EXPERIMENT_RUNNER_VERSION = "phase_3e"
 PREDICTION_FILENAMES = {
     "train": "predictions_train.csv",
     "val": "predictions_val.csv",
@@ -44,6 +49,9 @@ def train_front_side_cnn(
     patience: int = 3,
     weight_decay: float = 0.0,
     target_normalization_enabled: bool = True,
+    model_type: str = SIMPLE_MODEL_CHOICE,
+    shared_encoder: bool | None = None,
+    dropout: float = 0.2,
 ) -> dict[str, Any]:
     torch = import_torch()
     if epochs <= 0:
@@ -54,6 +62,8 @@ def train_front_side_cnn(
         raise ValueError("patience must be a non-negative integer.")
     if weight_decay < 0:
         raise ValueError("weight_decay must be non-negative.")
+    if not 0.0 <= dropout < 1.0:
+        raise ValueError("dropout must be greater than or equal to 0.0 and less than 1.0.")
     set_training_seed(seed)
 
     dataset_path = Path(dataset_root)
@@ -74,7 +84,13 @@ def train_front_side_cnn(
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     target_mean, target_std = target_normalization(train_dataset, enabled=target_normalization_enabled)
 
-    model = SimpleFrontSideCNN(target_count=len(TARGET_COLUMNS)).to(torch_device)
+    model_settings = resolve_model_settings(model_type, shared_encoder, dropout)
+    model = build_front_side_model(
+        model_type=model_settings["model_choice"],
+        target_count=len(TARGET_COLUMNS),
+        shared_encoder=bool(model_settings["shared_encoder"]),
+        dropout=float(model_settings["dropout"]),
+    ).to(torch_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     loss_fn = torch.nn.MSELoss()
 
@@ -117,8 +133,12 @@ def train_front_side_cnn(
         "test": evaluate_predictions(model, test_loader, target_mean, target_std, torch_device),
     }
     metrics = {
-        "model_type": MODEL_TYPE,
+        "model_type": model_settings["artifact_type"],
         "model_family": MODEL_FAMILY,
+        "model_choice": model_settings["model_choice"],
+        "shared_encoder": model_settings["shared_encoder"],
+        "dropout": model_settings["dropout"],
+        "target_count": len(TARGET_COLUMNS),
         "target_columns": list(TARGET_COLUMNS),
         "target_names": list(TARGET_COLUMNS),
         "sample_counts": {"train": len(train_dataset), "val": len(val_dataset), "test": len(test_dataset)},
@@ -158,6 +178,7 @@ def train_front_side_cnn(
         best_epoch,
         len(epoch_metrics),
         early_stopping_triggered,
+        model_settings,
     )
 
     output_path = Path(output_dir)
@@ -186,6 +207,10 @@ def train_front_side_cnn(
             "target_normalization_enabled": target_normalization_enabled,
             "best_epoch": best_epoch,
             "config": config,
+            "model_type": model_settings["artifact_type"],
+            "model_choice": model_settings["model_choice"],
+            "shared_encoder": model_settings["shared_encoder"],
+            "dropout": model_settings["dropout"],
         },
         model_path,
     )
@@ -199,6 +224,32 @@ def train_front_side_cnn(
         "prediction_paths": prediction_paths,
         "metrics": metrics,
     }
+
+
+def resolve_model_settings(model_type: str, shared_encoder: bool | None, dropout: float) -> dict[str, Any]:
+    if model_type not in MODEL_CHOICES:
+        raise ValueError(f"Unknown model type: {model_type}. Expected one of: {', '.join(MODEL_CHOICES)}.")
+    if model_type == SIMPLE_MODEL_CHOICE:
+        return {
+            "model_choice": SIMPLE_MODEL_CHOICE,
+            "artifact_type": MODEL_TYPE,
+            "shared_encoder": True if shared_encoder is None else shared_encoder,
+            "dropout": dropout,
+        }
+    return {
+        "model_choice": DUAL_BRANCH_MODEL_CHOICE,
+        "artifact_type": DUAL_BRANCH_MODEL_TYPE,
+        "shared_encoder": False if shared_encoder is None else shared_encoder,
+        "dropout": dropout,
+    }
+
+
+def build_front_side_model(model_type: str, target_count: int, shared_encoder: bool, dropout: float) -> Any:
+    if model_type == SIMPLE_MODEL_CHOICE:
+        return SimpleFrontSideCNN(target_count=target_count, shared_encoder=shared_encoder)
+    if model_type == DUAL_BRANCH_MODEL_CHOICE:
+        return DualBranchCNN(target_count=target_count, shared_encoder=shared_encoder, dropout=dropout)
+    raise ValueError(f"Unknown model type: {model_type}. Expected one of: {', '.join(MODEL_CHOICES)}.")
 
 
 def set_training_seed(seed: int) -> None:
@@ -387,6 +438,7 @@ def build_config(
     best_epoch: int,
     epochs_completed: int,
     early_stopping_triggered: bool,
+    model_settings: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "dataset": str(dataset_root),
@@ -410,9 +462,15 @@ def build_config(
         "best_epoch": best_epoch,
         "epochs_completed": epochs_completed,
         "early_stopping_triggered": early_stopping_triggered,
+        "model_type": model_settings["artifact_type"],
+        "model_choice": model_settings["model_choice"],
+        "shared_encoder": model_settings["shared_encoder"],
+        "dropout": model_settings["dropout"],
+        "target_count": len(TARGET_COLUMNS),
         "model": {
             "type": MODEL_FAMILY,
-            "artifact_type": MODEL_TYPE,
+            "artifact_type": model_settings["artifact_type"],
+            "model_choice": model_settings["model_choice"],
             "regression_method": "front_side_cnn_regression",
             "hyperparameters": {
                 "image_size": image_size,
@@ -421,6 +479,9 @@ def build_config(
                 "weight_decay": weight_decay,
                 "epochs": epochs,
                 "patience": patience,
+                "shared_encoder": model_settings["shared_encoder"],
+                "dropout": model_settings["dropout"],
+                "target_count": len(TARGET_COLUMNS),
             },
         },
         "experiment_runner_version": EXPERIMENT_RUNNER_VERSION,
@@ -474,6 +535,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--patience", type=int, default=3)
     parser.add_argument("--weight-decay", type=float, default=0.0)
     parser.add_argument("--disable-target-normalization", action="store_true")
+    parser.add_argument("--model", choices=MODEL_CHOICES, default=SIMPLE_MODEL_CHOICE)
+    parser.add_argument("--shared-encoder", action="store_true", default=None)
+    parser.add_argument("--dropout", type=float, default=0.2)
     args = parser.parse_args(argv)
 
     try:
@@ -491,6 +555,9 @@ def main(argv: list[str] | None = None) -> int:
             patience=args.patience,
             weight_decay=args.weight_decay,
             target_normalization_enabled=not args.disable_target_normalization,
+            model_type=args.model,
+            shared_encoder=args.shared_encoder,
+            dropout=args.dropout,
         )
     except DeepLearningDependencyError as error:
         print(str(error), file=sys.stderr)
