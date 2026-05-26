@@ -30,6 +30,14 @@ PHASE_3G_CONFIG_PATH = "synthetic/blender/configs/phase_3g_render_realism_config
 PHASE_3K_CONFIG_PATH = "synthetic/blender/configs/phase_3k_rng_isolation_config.example.json"
 PHASE_3L_CLEAN_CONFIG_PATH = "synthetic/blender/configs/phase_3l_same_body_clean_config.example.json"
 PHASE_3L_REALISM_CONFIG_PATH = "synthetic/blender/configs/phase_3l_same_body_realism_config.example.json"
+PHASE_3N_CONFIG_PATHS = [
+    "synthetic/blender/configs/phase_3n_clean_baseline_config.example.json",
+    "synthetic/blender/configs/phase_3n_background_only_config.example.json",
+    "synthetic/blender/configs/phase_3n_lighting_only_config.example.json",
+    "synthetic/blender/configs/phase_3n_camera_jitter_only_config.example.json",
+    "synthetic/blender/configs/phase_3n_skin_tone_only_config.example.json",
+    "synthetic/blender/configs/phase_3n_combined_realism_config.example.json",
+]
 
 
 def test_example_render_config_loads_and_validates() -> None:
@@ -466,6 +474,34 @@ def test_phase_3l_same_body_configs_share_body_generation_controls() -> None:
     assert realism_config.render_realism is not None
     assert clean_config.render_realism["enabled"] is False
     assert realism_config.render_realism["enabled"] is True
+
+
+def test_phase_3n_ablation_configs_share_body_controls_and_vary_realism_groups() -> None:
+    configs = [load_render_config(path) for path in PHASE_3N_CONFIG_PATHS]
+    baseline = configs[0]
+
+    for config in configs:
+        assert config.sample_count == 300
+        assert config.body_seed == baseline.body_seed == 42
+        assert config.render_seed == baseline.render_seed == 314159
+        assert config.body_parameter_ranges == baseline.body_parameter_ranges
+        assert config.variation_controls == baseline.variation_controls
+        assert config.image_width == baseline.image_width == 640
+        assert config.image_height == baseline.image_height == 896
+        assert config.render_realism is not None
+
+    clean, background, lighting, camera, material, combined = configs
+    assert clean.render_realism["enabled"] is False
+    assert background.render_realism["background"]["color_jitter"] > 0
+    assert background.render_realism["lighting"]["strength_multiplier_range"] == [1.0, 1.0]
+    assert lighting.render_realism["lighting"]["strength_multiplier_range"] == [0.85, 1.2]
+    assert lighting.render_realism["background"]["color_jitter"] == 0.0
+    assert camera.render_realism["camera"]["distance_jitter_range"] == [-0.12, 0.12]
+    assert camera.render_realism["materials"]["skin_tone_brightness_range"] == [1.0, 1.0]
+    assert material.render_realism["materials"]["skin_tone_brightness_range"] == [0.9, 1.08]
+    assert material.render_realism["camera"]["distance_jitter_range"] == [0.0, 0.0]
+    assert combined.render_realism["background"]["color_jitter"] > 0
+    assert combined.render_realism["camera"]["distance_jitter_range"] == [-0.12, 0.12]
 
 
 def test_rng_seed_resolution_is_backwards_compatible_with_random_seed() -> None:

@@ -144,6 +144,12 @@ data/synthetic/phase_3k_smoke_a/
 data/synthetic/phase_3k_smoke_b/
 data/synthetic/phase_3l_clean/
 data/synthetic/phase_3l_realism/
+data/synthetic/phase_3n_clean_baseline/
+data/synthetic/phase_3n_background_only/
+data/synthetic/phase_3n_lighting_only/
+data/synthetic/phase_3n_camera_jitter_only/
+data/synthetic/phase_3n_skin_tone_only/
+data/synthetic/phase_3n_combined_realism/
 *.blend
 *.blend1
 *.exr

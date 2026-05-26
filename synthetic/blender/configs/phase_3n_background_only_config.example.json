@@ -1,0 +1,348 @@
+{
+    "generator_version":  "phase_3n_background_only_v1",
+    "output_dir":  "data/synthetic/phase_3n_background_only",
+    "sample_count":  300,
+    "image_width":  640,
+    "image_height":  896,
+    "camera_distance":  4.5,
+    "camera_focal_length":  65,
+    "render_engine":  "BLENDER_EEVEE_NEXT",
+    "random_seed":  42,
+    "body_seed":  42,
+    "render_seed":  314159,
+    "views":  [
+                  "front",
+                  "side"
+              ],
+    "base_mesh":  {
+                      "enabled":  true,
+                      "asset_path":  "assets/body_meshes/base_human_rigged.fbx",
+                      "format":  "fbx",
+                      "source_front_axis":  "+X",
+                      "source_yaw_degrees":  30.0,
+                      "fallback_to_static_mesh":  true,
+                      "fallback_to_procedural":  true,
+                      "normalize_scale":  true,
+                      "center_on_origin":  true
+                  },
+    "rigging":  {
+                    "enabled":  true,
+                    "require_armature":  false,
+                    "detect_armature":  true,
+                    "detect_shape_keys":  true,
+                    "preferred_deformation_mode":  "shape_keys_then_bones_then_safe_scale"
+                },
+    "shape_key_mapping":  {
+                              "height":  [
+                                             "height",
+                                             "Height",
+                                             "body_height"
+                                         ],
+                              "weight":  [
+                                             "weight",
+                                             "Weight",
+                                             "body_weight"
+                                         ],
+                              "chest":  [
+                                            "chest",
+                                            "Chest",
+                                            "breast",
+                                            "torso_width"
+                                        ],
+                              "waist":  [
+                                            "waist",
+                                            "Waist",
+                                            "belly",
+                                            "abdomen"
+                                        ],
+                              "hips":  [
+                                           "hips",
+                                           "Hips",
+                                           "pelvis"
+                                       ],
+                              "shoulders":  [
+                                                "shoulders",
+                                                "Shoulders",
+                                                "shoulder_width"
+                                            ],
+                              "muscle":  [
+                                             "muscle",
+                                             "Muscle",
+                                             "athletic"
+                                         ],
+                              "body_fat":  [
+                                               "fat",
+                                               "Fat",
+                                               "body_fat",
+                                               "heavy"
+                                           ]
+                          },
+    "mesh_deformation":  {
+                             "enabled":  true,
+                             "mode":  "rigged_or_shape_key_v1",
+                             "strength":  0.30,
+                             "fallback_mode":  "safe_object_scale",
+                             "preserve_height":  true
+                         },
+    "camera":  {
+                   "auto_frame_body":  true,
+                   "margin":  0.20,
+                   "center_on_body":  true
+               },
+    "body_parameter_ranges":  {
+                                  "height_cm":  [
+                                                    150,
+                                                    205
+                                                ],
+                                  "weight_kg":  [
+                                                    45,
+                                                    130
+                                                ],
+                                  "chest_cm":  [
+                                                   75,
+                                                   130
+                                               ],
+                                  "waist_cm":  [
+                                                   55,
+                                                   125
+                                               ],
+                                  "hip_cm":  [
+                                                 75,
+                                                 135
+                                             ],
+                                  "shoulder_cm":  [
+                                                      35,
+                                                      60
+                                                  ],
+                                  "inseam_cm":  [
+                                                    65,
+                                                    95
+                                                ],
+                                  "sleeve_cm":  [
+                                                    50,
+                                                    75
+                                                ],
+                                  "neck_cm":  [
+                                                  30,
+                                                  50
+                                              ],
+                                  "thigh_cm":  [
+                                                   40,
+                                                   80
+                                               ],
+                                  "calf_cm":  [
+                                                  28,
+                                                  55
+                                              ]
+                              },
+    "variation_controls":  {
+                               "enabled":  true,
+                               "profile_range_overrides_enabled":  true,
+                               "notes":  "Same-body Phase 3N render realism ablation. Body variation is driven only by body_seed.",
+                               "body_shape_profiles":  {
+                                                           "slim":  {
+                                                                        "body_parameter_ranges":  {
+                                                                                                      "weight_kg":  [
+                                                                                                                        45,
+                                                                                                                        78
+                                                                                                                    ],
+                                                                                                      "chest_cm":  [
+                                                                                                                       75,
+                                                                                                                       100
+                                                                                                                   ],
+                                                                                                      "waist_cm":  [
+                                                                                                                       55,
+                                                                                                                       82
+                                                                                                                   ],
+                                                                                                      "hip_cm":  [
+                                                                                                                     75,
+                                                                                                                     102
+                                                                                                                 ],
+                                                                                                      "thigh_cm":  [
+                                                                                                                       40,
+                                                                                                                       58
+                                                                                                                   ],
+                                                                                                      "calf_cm":  [
+                                                                                                                      28,
+                                                                                                                      42
+                                                                                                                  ]
+                                                                                                  }
+                                                                    },
+                                                           "average":  {
+                                                                           "body_parameter_ranges":  {
+                                                                                                         "weight_kg":  [
+                                                                                                                           55,
+                                                                                                                           95
+                                                                                                                       ],
+                                                                                                         "chest_cm":  [
+                                                                                                                          85,
+                                                                                                                          112
+                                                                                                                      ],
+                                                                                                         "waist_cm":  [
+                                                                                                                          68,
+                                                                                                                          98
+                                                                                                                      ],
+                                                                                                         "hip_cm":  [
+                                                                                                                        85,
+                                                                                                                        112
+                                                                                                                    ],
+                                                                                                         "thigh_cm":  [
+                                                                                                                          46,
+                                                                                                                          66
+                                                                                                                      ],
+                                                                                                         "calf_cm":  [
+                                                                                                                         32,
+                                                                                                                         48
+                                                                                                                     ]
+                                                                                                     }
+                                                                       },
+                                                           "broad":  {
+                                                                         "body_parameter_ranges":  {
+                                                                                                       "weight_kg":  [
+                                                                                                                         75,
+                                                                                                                         130
+                                                                                                                     ],
+                                                                                                       "chest_cm":  [
+                                                                                                                        102,
+                                                                                                                        130
+                                                                                                                    ],
+                                                                                                       "waist_cm":  [
+                                                                                                                        82,
+                                                                                                                        125
+                                                                                                                    ],
+                                                                                                       "hip_cm":  [
+                                                                                                                      92,
+                                                                                                                      125
+                                                                                                                  ],
+                                                                                                       "shoulder_cm":  [
+                                                                                                                           48,
+                                                                                                                           60
+                                                                                                                       ],
+                                                                                                       "thigh_cm":  [
+                                                                                                                        55,
+                                                                                                                        80
+                                                                                                                    ],
+                                                                                                       "calf_cm":  [
+                                                                                                                       38,
+                                                                                                                       55
+                                                                                                                   ]
+                                                                                                   }
+                                                                     },
+                                                           "curvy":  {
+                                                                         "body_parameter_ranges":  {
+                                                                                                       "weight_kg":  [
+                                                                                                                         60,
+                                                                                                                         120
+                                                                                                                     ],
+                                                                                                       "chest_cm":  [
+                                                                                                                        92,
+                                                                                                                        128
+                                                                                                                    ],
+                                                                                                       "waist_cm":  [
+                                                                                                                        62,
+                                                                                                                        105
+                                                                                                                    ],
+                                                                                                       "hip_cm":  [
+                                                                                                                      102,
+                                                                                                                      135
+                                                                                                                  ],
+                                                                                                       "thigh_cm":  [
+                                                                                                                        52,
+                                                                                                                        78
+                                                                                                                    ],
+                                                                                                       "calf_cm":  [
+                                                                                                                       34,
+                                                                                                                       52
+                                                                                                                   ]
+                                                                                                   }
+                                                                     }
+                                                       }
+                           },
+    "render_realism":  {
+                           "enabled":  true,
+                           "version":  "phase_3n_background_only_v1",
+                           "notes":  "Phase 3N same-body render ablation: background_only.",
+                           "background":  {
+                                              "brightness_range":  [
+                                                                       0.82,
+                                                                       1
+                                                                   ],
+                                              "color_jitter":  0.04
+                                          },
+                           "lighting":  {
+                                            "strength_multiplier_range":  [
+                                                                              1,
+                                                                              1
+                                                                          ]
+                                        },
+                           "camera":  {
+                                          "distance_jitter_range":  [
+                                                                        0,
+                                                                        0
+                                                                    ],
+                                          "orthographic_scale_jitter_range":  [
+                                                                                  1,
+                                                                                  1
+                                                                              ],
+                                          "lateral_offset_range":  [
+                                                                       0,
+                                                                       0
+                                                                   ],
+                                          "vertical_offset_range":  [
+                                                                        0,
+                                                                        0
+                                                                    ]
+                                      },
+                           "render_resolution":  {
+                                                     "enabled":  true,
+                                                     "image_width":  640,
+                                                     "image_height":  896
+                                                 },
+                           "materials":  {
+                                             "skin_tone_brightness_range":  [
+                                                                                1,
+                                                                                1
+                                                                            ]
+                                         }
+                       },
+    "lighting":  {
+                     "type":  "three_point",
+                     "randomize_strength":  true
+                 },
+    "background":  {
+                       "type":  "plain",
+                       "color":  [
+                                     1,
+                                     1,
+                                     1
+                                 ]
+                   },
+    "materials":  {
+                      "skin_tones":  [
+                                         [
+                                             0.75,
+                                             0.55,
+                                             0.42,
+                                             1.0
+                                         ],
+                                         [
+                                             0.55,
+                                             0.36,
+                                             0.25,
+                                             1.0
+                                         ],
+                                         [
+                                             0.90,
+                                             0.72,
+                                             0.58,
+                                             1.0
+                                         ],
+                                         [
+                                             0.36,
+                                             0.22,
+                                             0.16,
+                                             1.0
+                                         ]
+                                     ]
+                  }
+}
