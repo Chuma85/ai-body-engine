@@ -1,0 +1,91 @@
+{
+  "strategy_version": "phase_3v_target_strategy_v1",
+  "notes": "Target grouping based on Phase 3U measurement-signal audit of Phase 3T.",
+  "target_groups": {
+    "all_targets": [
+      "height_cm",
+      "weight_kg",
+      "chest_cm",
+      "waist_cm",
+      "hip_cm",
+      "shoulder_cm",
+      "inseam_cm",
+      "sleeve_cm",
+      "neck_cm",
+      "thigh_cm",
+      "calf_cm"
+    ],
+    "silhouette_learnable": [
+      "chest_cm",
+      "waist_cm",
+      "hip_cm",
+      "thigh_cm",
+      "shoulder_cm",
+      "calf_cm"
+    ],
+    "landmark_or_proportion_required": [
+      "height_cm",
+      "inseam_cm",
+      "neck_cm",
+      "sleeve_cm"
+    ],
+    "manual_or_user_input": [
+      "height_cm"
+    ],
+    "mass_proxy_uncertain": [
+      "weight_kg"
+    ]
+  },
+  "target_recommendations": {
+    "silhouette_learnable": "Can be modeled from current front/side silhouettes, but still requires manual confirmation above 3 cm MAE.",
+    "landmark_or_proportion_required": "Do not trust as final prediction until a landmark/proportion strategy or better render-label alignment exists.",
+    "manual_or_user_input": "Ask the user or use calibrated metadata rather than inferring from current silhouettes.",
+    "mass_proxy_uncertain": "Treat as a coarse proxy from visible shape; not a direct tailoring measurement."
+  },
+  "candidate_runs": [
+    {
+      "run_name": "phase_3l_clean_ridge",
+      "description": "Current clean 1000-sample Ridge benchmark anchor."
+    },
+    {
+      "run_name": "phase_3t_raw_scale_camera__ridge",
+      "description": "Best Phase 3T classical run on the 1000-sample realistic dataset."
+    },
+    {
+      "run_name": "phase_3n_background_only__raw_scale_camera__elasticnet",
+      "description": "Best Phase 3R regularized candidate selected in Phase 3S."
+    },
+    {
+      "run_name": "phase_3n_camera_jitter_only__combined_hybrid_without_area_ratios__random_forest",
+      "description": "Best Phase 3R camera-jitter candidate selected in Phase 3S."
+    },
+    {
+      "run_name": "phase_3n_combined_realism__raw_scale_camera__gradient_boosting",
+      "description": "Phase 3S combined-realism candidate."
+    },
+    {
+      "run_name": "phase_3t_dual_branch_augmented",
+      "description": "Phase 3T augmented dual-branch CNN run."
+    }
+  ],
+  "artifact_sources": {
+    "benchmark_csvs": [
+      "artifacts/phase_3t_1000_realistic_benchmark/benchmark_results.csv",
+      "artifacts/phase_3s_benchmark_leaderboard/leaderboard.csv"
+    ],
+    "per_target_csvs": [
+      "artifacts/phase_3t_1000_realistic_benchmark/per_target_results.csv",
+      "artifacts/phase_3s_benchmark_leaderboard/per_target_leaderboard.csv"
+    ],
+    "metrics_jsons": [
+      {
+        "run_name": "phase_3l_clean_ridge",
+        "path": "artifacts/experiments/phase_3l_clean_ridge/metrics.json",
+        "dataset": "data/synthetic/phase_3l_clean",
+        "feature_group": "all_features",
+        "model_type": "ridge",
+        "source": "phase_3l_metrics"
+      }
+    ]
+  }
+}
