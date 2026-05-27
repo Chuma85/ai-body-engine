@@ -11,6 +11,7 @@ from synthetic.build_dataset_manifest import build_dataset_manifest
 from training.features.image_silhouette_features import (
     CROSS_VIEW_GEOMETRY_FEATURES,
     FEATURE_EXTRACTOR_VERSION,
+    create_color_distance_foreground_mask,
     create_foreground_mask,
     extract_cross_view_geometry_features,
     extract_front_side_features,
@@ -73,7 +74,7 @@ def test_feature_vector_has_stable_names_and_order(tmp_path) -> None:
     assert "side_hip_center_x_ratio" in names
     assert "front_to_side_bbox_height_ratio" in names
     assert "front_side_torso_volume_proxy" in names
-    assert FEATURE_EXTRACTOR_VERSION == "silhouette_geometry_v2"
+    assert FEATURE_EXTRACTOR_VERSION == "silhouette_geometry_v3"
     assert len(vector) == len(names)
     assert vector == feature_vector(features, names)
 
@@ -150,6 +151,58 @@ def test_empty_foreground_mask_raises_clear_error() -> None:
 
     with pytest.raises(ValueError, match="Foreground mask is empty"):
         extract_mask_features(mask, "front")
+
+
+def test_rgb_foreground_mask_handles_bright_and_dark_backgrounds() -> None:
+    bright_background = np.full((48, 48, 3), 235, dtype=np.float32)
+    bright_background[8:42, 18:30, :] = np.asarray([150, 120, 100], dtype=np.float32)
+    dark_background = np.full((48, 48, 3), 35, dtype=np.float32)
+    dark_background[8:42, 18:30, :] = np.asarray([160, 130, 110], dtype=np.float32)
+
+    bright_mask = create_foreground_mask(bright_background)
+    dark_mask = create_foreground_mask(dark_background)
+
+    assert bright_mask.sum() == 34 * 12
+    assert dark_mask.sum() == 34 * 12
+
+
+def test_rgb_foreground_mask_is_stable_under_material_brightness_changes() -> None:
+    base = np.full((64, 64, 3), 60, dtype=np.float32)
+    darker_body = base.copy()
+    brighter_body = base.copy()
+    darker_body[10:56, 24:40, :] = np.asarray([130, 105, 90], dtype=np.float32)
+    brighter_body[10:56, 24:40, :] = np.asarray([210, 175, 145], dtype=np.float32)
+
+    darker_mask = create_color_distance_foreground_mask(darker_body)
+    brighter_mask = create_color_distance_foreground_mask(brighter_body)
+
+    assert foreground_bounding_box(darker_mask) == foreground_bounding_box(brighter_mask)
+    assert darker_mask.sum() == brighter_mask.sum()
+
+
+def test_foreground_mask_handles_small_camera_framing_jitter() -> None:
+    base = np.full((64, 64, 3), 50, dtype=np.float32)
+    shifted = np.full((64, 64, 3), 50, dtype=np.float32)
+    base[8:58, 24:40, :] = np.asarray([205, 180, 155], dtype=np.float32)
+    shifted[10:60, 27:43, :] = np.asarray([205, 180, 155], dtype=np.float32)
+
+    base_mask = create_foreground_mask(base)
+    shifted_mask = create_foreground_mask(shifted)
+
+    assert foreground_bounding_box(base_mask) == (24, 8, 39, 57)
+    assert foreground_bounding_box(shifted_mask) == (27, 10, 42, 59)
+    assert base_mask.sum() == shifted_mask.sum()
+
+
+def test_foreground_mask_rejects_over_thresholded_masks() -> None:
+    image = np.full((50, 50), 255.0, dtype=np.float32)
+    image[0, :] = 0.0
+    image[-1, :] = 0.0
+    image[:, 0] = 0.0
+    image[:, -1] = 0.0
+
+    with pytest.raises(ValueError, match="over-thresholded"):
+        create_foreground_mask(image, min_contrast=1.0)
 
 
 def test_image_feature_training_runs_and_creates_metrics(tmp_path, monkeypatch) -> None:

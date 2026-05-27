@@ -10,6 +10,7 @@ from typing import Any
 SUMMARY_FILENAME = "summary.json"
 REPORT_FILENAME = "report.md"
 RESULTS_FILENAME = "results.csv"
+PER_TARGET_RESULTS_FILENAME = "per_target_results.csv"
 SPLITS = ("train", "val", "test")
 
 
@@ -36,15 +37,18 @@ def analyze_render_ablation(
     summary_path = output_path / SUMMARY_FILENAME
     report_path = output_path / REPORT_FILENAME
     results_path = output_path / RESULTS_FILENAME
+    per_target_results_path = output_path / PER_TARGET_RESULTS_FILENAME
 
     _write_json(summary_path, summary)
     report_path.write_text(format_render_ablation_report(summary), encoding="utf-8")
     write_results_csv(results_path, summary["results"])
+    write_per_target_results_csv(per_target_results_path, summary["per_target_results"])
 
     return {
         "summary_path": str(summary_path),
         "report_path": str(report_path),
         "results_path": str(results_path),
+        "per_target_results_path": str(per_target_results_path),
         "summary": summary,
     }
 
@@ -96,6 +100,7 @@ def build_render_ablation_summary(
         "split": _sample_counts(clean_run),
         "label_equality_confirmed": label_equality_confirmed,
         "results": results,
+        "per_target_results": per_target_result_rows(runs, clean_run_name),
         "ranked_results": ranked,
         "best_ablation": best,
         "worst_ablation": worst,
@@ -194,6 +199,46 @@ def write_results_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def per_target_result_rows(runs: list[dict[str, Any]], clean_run_name: str) -> list[dict[str, Any]]:
+    clean_run = next((run for run in runs if run["run_name"] == clean_run_name), None)
+    if clean_run is None:
+        raise ValueError(f"Clean baseline run '{clean_run_name}' was not found.")
+    target_columns = list(clean_run["metrics"].get("target_columns", []))
+    clean_values = clean_run["metrics"]["test"]["mae_by_target"]
+    rows: list[dict[str, Any]] = []
+    for run in runs:
+        values = run["metrics"]["test"]["mae_by_target"]
+        for target in target_columns:
+            mae = float(values[target])
+            clean_mae = float(clean_values[target])
+            rows.append(
+                {
+                    "ablation": ablation_name(run["run_name"]),
+                    "run_name": run["run_name"],
+                    "target": target,
+                    "test_mae": mae,
+                    "delta_vs_clean_test_mae": mae - clean_mae,
+                    "effect_vs_clean": effect_label(mae - clean_mae),
+                }
+            )
+    return rows
+
+
+def write_per_target_results_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    fieldnames = [
+        "ablation",
+        "run_name",
+        "target",
+        "test_mae",
+        "delta_vs_clean_test_mae",
+        "effect_vs_clean",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def recommendations(
     best: dict[str, Any],
     worst: dict[str, Any],
@@ -266,6 +311,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Summary: {result['summary_path']}")
     print(f"Report: {result['report_path']}")
     print(f"Results: {result['results_path']}")
+    print(f"Per-target results: {result['per_target_results_path']}")
     print(f"Best ablation: {summary['best_ablation']['ablation']} test MAE {summary['best_ablation']['test_mae']:.4f}")
     print(f"Worst ablation: {summary['worst_ablation']['ablation']} test MAE {summary['worst_ablation']['test_mae']:.4f}")
     return 0

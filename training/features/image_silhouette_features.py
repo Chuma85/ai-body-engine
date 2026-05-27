@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
-FEATURE_EXTRACTOR_VERSION = "silhouette_geometry_v2"
+FEATURE_EXTRACTOR_VERSION = "silhouette_geometry_v3"
 TORSO_REGION = (0.24, 0.62)
 LOWER_LEG_REGION = (0.78, 0.94)
 UPPER_BODY_REGION = (0.18, 0.38)
@@ -155,9 +155,18 @@ def extract_front_side_features(front_image_path: str | Path, side_image_path: s
 
 
 def extract_image_features(image_path: str | Path, prefix: str) -> dict[str, float]:
-    grayscale = load_grayscale_image(image_path)
-    mask = create_foreground_mask(grayscale)
+    image = load_rgb_image(image_path)
+    mask = create_foreground_mask(image)
     return extract_mask_features(mask, prefix)
+
+
+def load_rgb_image(image_path: str | Path) -> np.ndarray:
+    path = Path(image_path)
+    try:
+        with Image.open(path) as image:
+            return np.asarray(image.convert("RGB"), dtype=np.float32)
+    except (OSError, UnidentifiedImageError) as error:
+        raise ValueError(f"Could not read image file: {path}") from error
 
 
 def load_grayscale_image(image_path: str | Path) -> np.ndarray:
@@ -169,13 +178,13 @@ def load_grayscale_image(image_path: str | Path) -> np.ndarray:
         raise ValueError(f"Could not read image file: {path}") from error
 
 
-def create_foreground_mask(grayscale: np.ndarray, min_contrast: float = 20.0) -> np.ndarray:
-    if grayscale.ndim != 2:
-        raise ValueError("Expected a 2D grayscale image array.")
+def create_foreground_mask(image: np.ndarray, min_contrast: float = 12.0) -> np.ndarray:
+    if image.ndim == 3:
+        return create_color_distance_foreground_mask(image, min_distance=min_contrast)
+    if image.ndim != 2:
+        raise ValueError("Expected a 2D grayscale image array or 3D RGB image array.")
 
-    # Current synthetic renders use a mostly uniform gray background and a lighter body.
-    # Estimate the background from image borders so the threshold stays deterministic
-    # while remaining tolerant of future light-on-dark or dark-on-light renders.
+    grayscale = image.astype(np.float32)
     border_pixels = np.concatenate(
         [
             grayscale[0, :],
@@ -188,10 +197,60 @@ def create_foreground_mask(grayscale: np.ndarray, min_contrast: float = 20.0) ->
     lighter_mask = grayscale > background_level + min_contrast
     darker_mask = grayscale < background_level - min_contrast
     mask = lighter_mask if int(lighter_mask.sum()) >= int(darker_mask.sum()) else darker_mask
+    return validate_foreground_mask(mask)
 
+
+def create_color_distance_foreground_mask(rgb: np.ndarray, min_distance: float = 12.0) -> np.ndarray:
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError("Expected an RGB image array with shape (height, width, 3).")
+
+    image = rgb.astype(np.float32)
+    border_pixels = np.concatenate(
+        [
+            image[0, :, :],
+            image[-1, :, :],
+            image[:, 0, :],
+            image[:, -1, :],
+        ],
+        axis=0,
+    )
+    background_color = np.median(border_pixels, axis=0)
+    distances = np.linalg.norm(image - background_color, axis=2)
+    border_distances = np.concatenate(
+        [
+            distances[0, :],
+            distances[-1, :],
+            distances[:, 0],
+            distances[:, -1],
+        ]
+    )
+    adaptive_threshold = float(np.percentile(border_distances, 98) + 6.0)
+    threshold = max(float(min_distance), adaptive_threshold)
+    mask = distances > threshold
+
+    try:
+        return validate_foreground_mask(mask)
+    except ValueError:
+        grayscale = image.mean(axis=2)
+        return create_foreground_mask(grayscale, min_contrast=max(8.0, min_distance))
+
+
+def validate_foreground_mask(mask: np.ndarray, min_area_ratio: float = 0.002, max_area_ratio: float = 0.80) -> np.ndarray:
+    if mask.ndim != 2:
+        raise ValueError("Expected a 2D foreground mask.")
     if not bool(mask.any()):
         raise ValueError("No foreground pixels found with the current contrast threshold.")
 
+    area_ratio = float(mask.sum()) / float(mask.shape[0] * mask.shape[1])
+    if area_ratio < min_area_ratio:
+        raise ValueError(f"Foreground mask is too small or unstable: area_ratio={area_ratio:.6f}.")
+    if area_ratio > max_area_ratio:
+        raise ValueError(f"Foreground mask is too large or over-thresholded: area_ratio={area_ratio:.6f}.")
+
+    _x_min, y_min, _x_max, y_max = foreground_bounding_box(mask)
+    bbox_height_ratio = (y_max - y_min + 1) / float(mask.shape[0])
+    if bbox_height_ratio < 0.20:
+        raise ValueError(f"Foreground mask is too short or partial: bbox_height_ratio={bbox_height_ratio:.6f}.")
     return mask
 
 

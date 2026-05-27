@@ -66,7 +66,9 @@ def test_analyze_render_ablation_writes_outputs(tmp_path) -> None:
     assert (output_dir / "summary.json").exists()
     assert (output_dir / "report.md").exists()
     assert (output_dir / "results.csv").exists()
+    assert (output_dir / "per_target_results.csv").exists()
     assert result["summary"]["best_ablation"]["ablation"] == "background_only"
+    assert result["summary"]["per_target_results"][0]["target"] == "height_cm"
 
 
 def test_analyze_render_ablation_missing_metrics_raises_clear_error(tmp_path) -> None:
