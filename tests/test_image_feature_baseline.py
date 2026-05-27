@@ -51,6 +51,12 @@ def test_bounding_box_feature_extraction(tmp_path) -> None:
     assert features["front_bbox_width_px"] == CANONICAL_BODY_HEIGHT
     assert features["front_bbox_height_px"] == CANONICAL_BODY_HEIGHT
     assert features["front_foreground_area_ratio"] == pytest.approx((CANONICAL_BODY_HEIGHT * CANONICAL_BODY_HEIGHT) / (CANONICAL_MASK_WIDTH * CANONICAL_MASK_HEIGHT))
+    assert features["front_raw_bbox_width_px"] == 4.0
+    assert features["front_raw_bbox_height_px"] == 4.0
+    assert features["front_raw_mask_area_px"] == 16.0
+    assert features["front_normalization_scale_factor"] == pytest.approx(CANONICAL_BODY_HEIGHT / 4)
+    assert features["front_crop_offset_x"] == 4.0
+    assert features["front_crop_offset_y"] == 3.0
 
 
 def test_feature_vector_has_stable_names_and_order(tmp_path) -> None:
@@ -77,12 +83,18 @@ def test_feature_vector_has_stable_names_and_order(tmp_path) -> None:
     assert "front_waist_min_torso_width_ratio" in names
     assert "front_neck_to_shoulder_width_ratio" in names
     assert "front_calf_to_ankle_width_ratio" in names
+    assert "front_raw_bbox_height_px" in names
+    assert "front_normalization_scale_factor" in names
+    assert "side_crop_offset_y_ratio" in names
     assert "side_hip_center_x_ratio" in names
     assert "front_to_side_bbox_height_ratio" in names
     assert "front_side_torso_volume_proxy" in names
-    assert FEATURE_EXTRACTOR_VERSION == "silhouette_geometry_v4"
+    assert FEATURE_EXTRACTOR_VERSION == "silhouette_geometry_v5_hybrid"
     assert len(vector) == len(names)
     assert vector == feature_vector(features, names)
+    assert features["front_to_side_bbox_width_ratio"] == pytest.approx(
+        features["front_raw_bbox_width_px"] / features["side_raw_bbox_width_px"]
+    )
 
 
 def test_tiny_mask_profile_features_are_deterministic() -> None:
@@ -249,6 +261,25 @@ def test_normalized_features_are_near_identical_for_shifted_images(tmp_path) -> 
     assert base_features["front_bbox_width_px"] == shifted_features["front_bbox_width_px"]
     assert base_features["front_bbox_center_x_ratio"] == pytest.approx(shifted_features["front_bbox_center_x_ratio"])
     assert base_features["front_bbox_center_y_ratio"] == pytest.approx(shifted_features["front_bbox_center_y_ratio"])
+    assert base_features["front_crop_offset_x"] != shifted_features["front_crop_offset_x"]
+    assert base_features["front_crop_offset_y"] != shifted_features["front_crop_offset_y"]
+
+
+def test_hybrid_raw_scale_features_change_when_body_scale_changes(tmp_path) -> None:
+    small_path = tmp_path / "small.png"
+    large_path = tmp_path / "large.png"
+    _write_rect_image(small_path, rect=(30, 20, 45, 79), size=(100, 120))
+    _write_rect_image(large_path, rect=(45, 25, 68, 114), size=(140, 160))
+
+    small_features = extract_image_features(small_path, "front")
+    large_features = extract_image_features(large_path, "front")
+
+    assert small_features["front_bbox_height_px"] == large_features["front_bbox_height_px"]
+    assert small_features["front_bbox_width_px"] == large_features["front_bbox_width_px"]
+    assert small_features["front_raw_bbox_height_px"] == 60.0
+    assert large_features["front_raw_bbox_height_px"] == 90.0
+    assert small_features["front_raw_mask_area_px"] != large_features["front_raw_mask_area_px"]
+    assert small_features["front_normalization_scale_factor"] != large_features["front_normalization_scale_factor"]
 
 
 def test_normalize_body_mask_rejects_truncated_masks() -> None:

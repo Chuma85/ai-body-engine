@@ -116,12 +116,14 @@ def build_feature_drift_summary(
     clean = dataset_features[clean_name]
     rows: list[dict[str, Any]] = []
     top_by_ablation: dict[str, list[dict[str, Any]]] = {}
+    group_drift_by_ablation: dict[str, list[dict[str, Any]]] = {}
 
     for name, data in dataset_features.items():
         matched_clean, matched_current = matched_feature_matrices(clean, data)
         drift_rows = feature_drift_rows(name, matched_clean, matched_current, feature_names)
         rows.extend(drift_rows)
         top_by_ablation[name] = sorted(drift_rows, key=lambda row: row["mean_abs_drift"], reverse=True)[:10]
+        group_drift_by_ablation[name] = feature_group_drift_rows(drift_rows)
 
     return {
         "feature_extractor_version": FEATURE_EXTRACTOR_VERSION,
@@ -131,6 +133,7 @@ def build_feature_drift_summary(
         "ablation_names": list(dataset_features),
         "rows": rows,
         "top_drift_by_ablation": top_by_ablation,
+        "feature_group_drift_by_ablation": group_drift_by_ablation,
         "recommendations": recommendations(top_by_ablation, clean_name),
     }
 
@@ -162,6 +165,7 @@ def feature_drift_rows(
             {
                 "ablation": ablation,
                 "feature": feature_name,
+                "feature_group": feature_drift_group(feature_name),
                 "clean_mean": float(clean_values.mean()),
                 "clean_std": float(clean_values.std()),
                 "clean_min": float(clean_values.min()),
@@ -176,6 +180,37 @@ def feature_drift_rows(
             }
         )
     return rows
+
+
+def feature_drift_group(feature_name: str) -> str:
+    if "_raw_" in feature_name or "_normalization_scale_factor" in feature_name or "_crop_offset_" in feature_name:
+        return "raw_scale_camera"
+    if feature_name in {
+        "front_to_side_bbox_height_ratio",
+        "front_to_side_bbox_width_ratio",
+        "front_to_side_area_ratio",
+    }:
+        return "raw_scale_camera"
+    if feature_name.startswith("front_side_"):
+        return "combined_hybrid"
+    return "normalized_shape"
+
+
+def feature_group_drift_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups = sorted({row["feature_group"] for row in rows})
+    group_rows = []
+    for group in groups:
+        group_rows_for_name = [row for row in rows if row["feature_group"] == group]
+        group_rows.append(
+            {
+                "feature_group": group,
+                "feature_count": len(group_rows_for_name),
+                "mean_abs_drift": float(np.mean([row["mean_abs_drift"] for row in group_rows_for_name])),
+                "max_abs_drift": float(max(row["max_abs_drift"] for row in group_rows_for_name)),
+                "top_feature": max(group_rows_for_name, key=lambda row: row["mean_abs_drift"])["feature"],
+            }
+        )
+    return sorted(group_rows, key=lambda row: row["mean_abs_drift"], reverse=True)
 
 
 def format_feature_drift_report(summary: dict[str, Any]) -> str:
@@ -211,6 +246,28 @@ def format_feature_drift_report(summary: dict[str, Any]) -> str:
                 "",
             ]
         )
+        group_rows = summary.get("feature_group_drift_by_ablation", {}).get(ablation, [])
+        if group_rows:
+            lines.extend(
+                [
+                    "Feature group drift:",
+                    "",
+                    _markdown_table(
+                        ["Group", "Features", "Mean Abs Drift", "Max Abs Drift", "Top Feature"],
+                        [
+                            [
+                                row["feature_group"],
+                                str(row["feature_count"]),
+                                _format_float(row["mean_abs_drift"]),
+                                _format_float(row["max_abs_drift"]),
+                                row["top_feature"],
+                            ]
+                            for row in group_rows
+                        ],
+                    ),
+                    "",
+                ]
+            )
     lines.extend(["## Recommendations", "", *[f"- {note}" for note in summary["recommendations"]], ""])
     raw_top = summary.get("raw_top_drift_by_ablation")
     if raw_top:
@@ -231,6 +288,7 @@ def write_feature_drift_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     fieldnames = [
         "ablation",
         "feature",
+        "feature_group",
         "clean_mean",
         "clean_std",
         "clean_min",

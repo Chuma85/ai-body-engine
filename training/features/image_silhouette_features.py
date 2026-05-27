@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
-FEATURE_EXTRACTOR_VERSION = "silhouette_geometry_v4"
+FEATURE_EXTRACTOR_VERSION = "silhouette_geometry_v5_hybrid"
 CANONICAL_MASK_WIDTH = 256
 CANONICAL_MASK_HEIGHT = 256
 CANONICAL_BODY_HEIGHT = 220
@@ -89,6 +89,22 @@ GEOMETRY_FEATURE_SUFFIXES = [
     "calf_to_ankle_width_ratio",
     "calf_to_thigh_width_ratio",
 ]
+RAW_SCALE_CAMERA_FEATURE_SUFFIXES = [
+    "raw_image_width_px",
+    "raw_image_height_px",
+    "raw_bbox_width_px",
+    "raw_bbox_height_px",
+    "raw_mask_area_px",
+    "raw_bbox_aspect_ratio",
+    "raw_bbox_width_ratio",
+    "raw_bbox_height_ratio",
+    "raw_mask_area_ratio",
+    "normalization_scale_factor",
+    "crop_offset_x",
+    "crop_offset_y",
+    "crop_offset_x_ratio",
+    "crop_offset_y_ratio",
+]
 CROSS_VIEW_GEOMETRY_FEATURES = [
     "front_side_area_product_proxy",
     "front_side_integrated_volume_proxy",
@@ -126,6 +142,7 @@ def get_feature_names() -> list[str]:
             ]
         )
         names.extend(f"{prefix}_{suffix}" for suffix in GEOMETRY_FEATURE_SUFFIXES)
+        names.extend(f"{prefix}_{suffix}" for suffix in RAW_SCALE_CAMERA_FEATURE_SUFFIXES)
     names.extend(
         [
             "front_to_side_bbox_height_ratio",
@@ -142,16 +159,16 @@ def extract_front_side_features(front_image_path: str | Path, side_image_path: s
     side_features = extract_image_features(side_image_path, "side", normalize=normalize)
     features = {**front_features, **side_features}
     features["front_to_side_bbox_height_ratio"] = _safe_ratio(
-        features["front_bbox_height_px"],
-        features["side_bbox_height_px"],
+        features["front_raw_bbox_height_px"],
+        features["side_raw_bbox_height_px"],
     )
     features["front_to_side_bbox_width_ratio"] = _safe_ratio(
-        features["front_bbox_width_px"],
-        features["side_bbox_width_px"],
+        features["front_raw_bbox_width_px"],
+        features["side_raw_bbox_width_px"],
     )
     features["front_to_side_area_ratio"] = _safe_ratio(
-        features["front_foreground_area_ratio"],
-        features["side_foreground_area_ratio"],
+        features["front_raw_mask_area_ratio"],
+        features["side_raw_mask_area_ratio"],
     )
     features.update(extract_cross_view_geometry_features(features))
     return {name: float(features[name]) for name in get_feature_names()}
@@ -159,10 +176,15 @@ def extract_front_side_features(front_image_path: str | Path, side_image_path: s
 
 def extract_image_features(image_path: str | Path, prefix: str, normalize: bool = True) -> dict[str, float]:
     image = load_rgb_image(image_path)
-    mask = create_foreground_mask(image)
+    raw_mask = create_foreground_mask(image)
     if normalize:
-        mask = normalize_body_mask(mask)
-    return extract_mask_features(mask, prefix)
+        mask, normalization = _normalize_body_mask_and_metadata(raw_mask)
+    else:
+        mask = raw_mask
+        _normalized_mask, normalization = _normalize_body_mask_and_metadata(raw_mask)
+    features = extract_mask_features(mask, prefix)
+    features.update(extract_raw_scale_camera_features(raw_mask, prefix, normalization))
+    return features
 
 
 def load_rgb_image(image_path: str | Path) -> np.ndarray:
@@ -266,6 +288,23 @@ def normalize_body_mask(
     target_body_height: int = CANONICAL_BODY_HEIGHT,
     edge_margin: int = 1,
 ) -> np.ndarray:
+    normalized, _metadata = _normalize_body_mask_and_metadata(
+        mask,
+        canvas_width=canvas_width,
+        canvas_height=canvas_height,
+        target_body_height=target_body_height,
+        edge_margin=edge_margin,
+    )
+    return normalized
+
+
+def _normalize_body_mask_and_metadata(
+    mask: np.ndarray,
+    canvas_width: int = CANONICAL_MASK_WIDTH,
+    canvas_height: int = CANONICAL_MASK_HEIGHT,
+    target_body_height: int = CANONICAL_BODY_HEIGHT,
+    edge_margin: int = 1,
+) -> tuple[np.ndarray, dict[str, float]]:
     validate_foreground_mask(mask)
     if canvas_width <= 0 or canvas_height <= 0 or target_body_height <= 0:
         raise ValueError("Canonical mask dimensions and target body height must be positive.")
@@ -301,7 +340,39 @@ def normalize_body_mask(
     x_offset = (canvas_width - resized_width) // 2
     y_offset = (canvas_height - resized_height) // 2
     normalized[y_offset : y_offset + resized_height, x_offset : x_offset + resized_width] = resized_mask
-    return validate_foreground_mask(normalized)
+    metadata = {
+        "normalization_scale_factor": float(scale),
+        "crop_offset_x": float(x_min),
+        "crop_offset_y": float(y_min),
+        "crop_offset_x_ratio": float(x_min) / float(mask.shape[1]),
+        "crop_offset_y_ratio": float(y_min) / float(mask.shape[0]),
+    }
+    return validate_foreground_mask(normalized), metadata
+
+
+def extract_raw_scale_camera_features(mask: np.ndarray, prefix: str, normalization: dict[str, float]) -> dict[str, float]:
+    validate_foreground_mask(mask)
+    image_height, image_width = mask.shape
+    x_min, y_min, x_max, y_max = foreground_bounding_box(mask)
+    bbox_width = x_max - x_min + 1
+    bbox_height = y_max - y_min + 1
+    mask_area = float(mask.sum())
+    return {
+        f"{prefix}_raw_image_width_px": float(image_width),
+        f"{prefix}_raw_image_height_px": float(image_height),
+        f"{prefix}_raw_bbox_width_px": float(bbox_width),
+        f"{prefix}_raw_bbox_height_px": float(bbox_height),
+        f"{prefix}_raw_mask_area_px": mask_area,
+        f"{prefix}_raw_bbox_aspect_ratio": _safe_ratio(bbox_width, bbox_height),
+        f"{prefix}_raw_bbox_width_ratio": _safe_ratio(bbox_width, image_width),
+        f"{prefix}_raw_bbox_height_ratio": _safe_ratio(bbox_height, image_height),
+        f"{prefix}_raw_mask_area_ratio": mask_area / float(image_width * image_height),
+        f"{prefix}_normalization_scale_factor": float(normalization["normalization_scale_factor"]),
+        f"{prefix}_crop_offset_x": float(normalization["crop_offset_x"]),
+        f"{prefix}_crop_offset_y": float(normalization["crop_offset_y"]),
+        f"{prefix}_crop_offset_x_ratio": float(normalization["crop_offset_x_ratio"]),
+        f"{prefix}_crop_offset_y_ratio": float(normalization["crop_offset_y_ratio"]),
+    }
 
 
 def extract_mask_features(mask: np.ndarray, prefix: str) -> dict[str, float]:
