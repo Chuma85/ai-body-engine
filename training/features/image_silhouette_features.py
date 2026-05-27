@@ -6,7 +6,10 @@ from typing import Any
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
-FEATURE_EXTRACTOR_VERSION = "silhouette_geometry_v3"
+FEATURE_EXTRACTOR_VERSION = "silhouette_geometry_v4"
+CANONICAL_MASK_WIDTH = 256
+CANONICAL_MASK_HEIGHT = 256
+CANONICAL_BODY_HEIGHT = 220
 TORSO_REGION = (0.24, 0.62)
 LOWER_LEG_REGION = (0.78, 0.94)
 UPPER_BODY_REGION = (0.18, 0.38)
@@ -134,9 +137,9 @@ def get_feature_names() -> list[str]:
     return names
 
 
-def extract_front_side_features(front_image_path: str | Path, side_image_path: str | Path) -> dict[str, float]:
-    front_features = extract_image_features(front_image_path, "front")
-    side_features = extract_image_features(side_image_path, "side")
+def extract_front_side_features(front_image_path: str | Path, side_image_path: str | Path, normalize: bool = True) -> dict[str, float]:
+    front_features = extract_image_features(front_image_path, "front", normalize=normalize)
+    side_features = extract_image_features(side_image_path, "side", normalize=normalize)
     features = {**front_features, **side_features}
     features["front_to_side_bbox_height_ratio"] = _safe_ratio(
         features["front_bbox_height_px"],
@@ -154,9 +157,11 @@ def extract_front_side_features(front_image_path: str | Path, side_image_path: s
     return {name: float(features[name]) for name in get_feature_names()}
 
 
-def extract_image_features(image_path: str | Path, prefix: str) -> dict[str, float]:
+def extract_image_features(image_path: str | Path, prefix: str, normalize: bool = True) -> dict[str, float]:
     image = load_rgb_image(image_path)
     mask = create_foreground_mask(image)
+    if normalize:
+        mask = normalize_body_mask(mask)
     return extract_mask_features(mask, prefix)
 
 
@@ -252,6 +257,51 @@ def validate_foreground_mask(mask: np.ndarray, min_area_ratio: float = 0.002, ma
     if bbox_height_ratio < 0.20:
         raise ValueError(f"Foreground mask is too short or partial: bbox_height_ratio={bbox_height_ratio:.6f}.")
     return mask
+
+
+def normalize_body_mask(
+    mask: np.ndarray,
+    canvas_width: int = CANONICAL_MASK_WIDTH,
+    canvas_height: int = CANONICAL_MASK_HEIGHT,
+    target_body_height: int = CANONICAL_BODY_HEIGHT,
+    edge_margin: int = 1,
+) -> np.ndarray:
+    validate_foreground_mask(mask)
+    if canvas_width <= 0 or canvas_height <= 0 or target_body_height <= 0:
+        raise ValueError("Canonical mask dimensions and target body height must be positive.")
+    if target_body_height > canvas_height:
+        raise ValueError("Target body height must fit inside the canonical canvas.")
+
+    x_min, y_min, x_max, y_max = foreground_bounding_box(mask)
+    if (
+        x_min <= edge_margin
+        or y_min <= edge_margin
+        or x_max >= mask.shape[1] - 1 - edge_margin
+        or y_max >= mask.shape[0] - 1 - edge_margin
+    ):
+        raise ValueError("Foreground mask appears truncated at the image boundary.")
+
+    cropped = mask[y_min : y_max + 1, x_min : x_max + 1]
+    bbox_height, bbox_width = cropped.shape
+    scale = target_body_height / float(bbox_height)
+    resized_width = max(1, int(round(bbox_width * scale)))
+    resized_height = target_body_height
+    if resized_width > canvas_width:
+        scale = canvas_width / float(bbox_width)
+        resized_width = canvas_width
+        resized_height = max(1, int(round(bbox_height * scale)))
+        if resized_height > canvas_height:
+            raise ValueError("Normalized foreground mask does not fit the canonical canvas.")
+
+    resample = Image.Resampling.NEAREST if hasattr(Image, "Resampling") else Image.NEAREST
+    resized = Image.fromarray(cropped.astype(np.uint8) * 255).resize((resized_width, resized_height), resample=resample)
+    resized_mask = np.asarray(resized, dtype=np.uint8) > 0
+
+    normalized = np.zeros((canvas_height, canvas_width), dtype=bool)
+    x_offset = (canvas_width - resized_width) // 2
+    y_offset = (canvas_height - resized_height) // 2
+    normalized[y_offset : y_offset + resized_height, x_offset : x_offset + resized_width] = resized_mask
+    return validate_foreground_mask(normalized)
 
 
 def extract_mask_features(mask: np.ndarray, prefix: str) -> dict[str, float]:

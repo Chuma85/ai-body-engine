@@ -11,6 +11,9 @@ from synthetic.build_dataset_manifest import build_dataset_manifest
 from training.features.image_silhouette_features import (
     CROSS_VIEW_GEOMETRY_FEATURES,
     FEATURE_EXTRACTOR_VERSION,
+    CANONICAL_BODY_HEIGHT,
+    CANONICAL_MASK_HEIGHT,
+    CANONICAL_MASK_WIDTH,
     create_color_distance_foreground_mask,
     create_foreground_mask,
     extract_cross_view_geometry_features,
@@ -20,6 +23,7 @@ from training.features.image_silhouette_features import (
     feature_vector,
     foreground_bounding_box,
     get_feature_names,
+    normalize_body_mask,
 )
 from training.train_image_feature_baseline import main, train_image_feature_baseline
 
@@ -42,9 +46,11 @@ def test_bounding_box_feature_extraction(tmp_path) -> None:
     features = extract_image_features(image_path, "front")
 
     assert foreground_bounding_box(create_foreground_mask(np.asarray(Image.open(image_path).convert("L"), dtype=np.float32))) == (4, 3, 7, 6)
-    assert features["front_bbox_width_px"] == 4.0
-    assert features["front_bbox_height_px"] == 4.0
-    assert features["front_foreground_area_ratio"] == 0.16
+    assert features["front_image_width_px"] == CANONICAL_MASK_WIDTH
+    assert features["front_image_height_px"] == CANONICAL_MASK_HEIGHT
+    assert features["front_bbox_width_px"] == CANONICAL_BODY_HEIGHT
+    assert features["front_bbox_height_px"] == CANONICAL_BODY_HEIGHT
+    assert features["front_foreground_area_ratio"] == pytest.approx((CANONICAL_BODY_HEIGHT * CANONICAL_BODY_HEIGHT) / (CANONICAL_MASK_WIDTH * CANONICAL_MASK_HEIGHT))
 
 
 def test_feature_vector_has_stable_names_and_order(tmp_path) -> None:
@@ -74,7 +80,7 @@ def test_feature_vector_has_stable_names_and_order(tmp_path) -> None:
     assert "side_hip_center_x_ratio" in names
     assert "front_to_side_bbox_height_ratio" in names
     assert "front_side_torso_volume_proxy" in names
-    assert FEATURE_EXTRACTOR_VERSION == "silhouette_geometry_v3"
+    assert FEATURE_EXTRACTOR_VERSION == "silhouette_geometry_v4"
     assert len(vector) == len(names)
     assert vector == feature_vector(features, names)
 
@@ -192,6 +198,80 @@ def test_foreground_mask_handles_small_camera_framing_jitter() -> None:
     assert foreground_bounding_box(base_mask) == (24, 8, 39, 57)
     assert foreground_bounding_box(shifted_mask) == (27, 10, 42, 59)
     assert base_mask.sum() == shifted_mask.sum()
+
+
+def test_normalized_mask_is_stable_for_left_right_shift() -> None:
+    left = np.zeros((80, 80), dtype=bool)
+    right = np.zeros((80, 80), dtype=bool)
+    left[10:70, 18:34] = True
+    right[10:70, 38:54] = True
+
+    assert np.array_equal(normalize_body_mask(left), normalize_body_mask(right))
+
+
+def test_normalized_mask_is_stable_for_up_down_shift() -> None:
+    upper = np.zeros((90, 80), dtype=bool)
+    lower = np.zeros((90, 80), dtype=bool)
+    upper[8:68, 30:46] = True
+    lower[22:82, 30:46] = True
+
+    assert np.array_equal(normalize_body_mask(upper), normalize_body_mask(lower))
+
+
+def test_normalized_mask_is_stable_with_extra_padding() -> None:
+    tight = np.zeros((80, 60), dtype=bool)
+    padded = np.zeros((120, 100), dtype=bool)
+    tight[10:70, 22:38] = True
+    padded[30:90, 42:58] = True
+
+    assert np.array_equal(normalize_body_mask(tight), normalize_body_mask(padded))
+
+
+def test_normalized_mask_is_stable_for_same_aspect_scale_change() -> None:
+    small = np.zeros((80, 80), dtype=bool)
+    large = np.zeros((120, 120), dtype=bool)
+    small[10:70, 30:46] = True
+    large[15:105, 45:69] = True
+
+    assert np.array_equal(normalize_body_mask(small), normalize_body_mask(large))
+
+
+def test_normalized_features_are_near_identical_for_shifted_images(tmp_path) -> None:
+    base_path = tmp_path / "base.png"
+    shifted_path = tmp_path / "shifted.png"
+    _write_rect_image(base_path, rect=(24, 8, 39, 57), size=(80, 80))
+    _write_rect_image(shifted_path, rect=(34, 18, 49, 67), size=(100, 100))
+
+    base_features = extract_image_features(base_path, "front")
+    shifted_features = extract_image_features(shifted_path, "front")
+
+    assert base_features["front_bbox_height_px"] == shifted_features["front_bbox_height_px"]
+    assert base_features["front_bbox_width_px"] == shifted_features["front_bbox_width_px"]
+    assert base_features["front_bbox_center_x_ratio"] == pytest.approx(shifted_features["front_bbox_center_x_ratio"])
+    assert base_features["front_bbox_center_y_ratio"] == pytest.approx(shifted_features["front_bbox_center_y_ratio"])
+
+
+def test_normalize_body_mask_rejects_truncated_masks() -> None:
+    mask = np.zeros((80, 80), dtype=bool)
+    mask[0:60, 20:40] = True
+
+    with pytest.raises(ValueError, match="truncated"):
+        normalize_body_mask(mask)
+
+
+def test_normalize_body_mask_rejects_empty_masks() -> None:
+    mask = np.zeros((80, 80), dtype=bool)
+
+    with pytest.raises(ValueError, match="No foreground pixels"):
+        normalize_body_mask(mask)
+
+
+def test_normalize_body_mask_rejects_tiny_masks() -> None:
+    mask = np.zeros((80, 80), dtype=bool)
+    mask[20:22, 20:22] = True
+
+    with pytest.raises(ValueError, match="too small"):
+        normalize_body_mask(mask)
 
 
 def test_foreground_mask_rejects_over_thresholded_masks() -> None:

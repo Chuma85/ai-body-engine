@@ -5,6 +5,7 @@ from training.experiments.analyze_feature_drift import (
     ablation_name,
     build_feature_drift_summary,
     feature_drift_rows,
+    format_feature_drift_report,
     matched_feature_matrices,
 )
 
@@ -65,6 +66,50 @@ def test_build_feature_drift_summary_identifies_top_drift() -> None:
     assert summary["feature_count"] == 2
     assert summary["top_drift_by_ablation"]["background_only"][0]["feature"] == "drifty"
     assert summary["top_drift_by_ablation"]["background_only"][0]["mean_abs_drift"] == 15.0
+
+
+def test_feature_drift_report_includes_raw_comparison_when_present() -> None:
+    summary = {
+        "feature_extractor_version": "test",
+        "clean_dataset": "clean_baseline",
+        "sample_count": 2,
+        "feature_count": 1,
+        "top_drift_by_ablation": {
+            "background_only": [
+                {
+                    "feature": "normalized_feature",
+                    "mean_abs_drift": 0.5,
+                    "mean_signed_drift": 0.0,
+                    "clean_mean": 1.0,
+                    "ablation_mean": 1.5,
+                    "clean_std": 0.0,
+                    "ablation_std": 0.0,
+                    "clean_min": 1.0,
+                    "clean_max": 1.0,
+                    "ablation_min": 1.5,
+                    "ablation_max": 1.5,
+                    "sample_count": 2,
+                    "ablation": "background_only",
+                }
+            ]
+        },
+        "raw_top_drift_by_ablation": {
+            "background_only": [
+                {
+                    "feature": "raw_feature",
+                    "mean_abs_drift": 12.0,
+                }
+            ]
+        },
+        "rows": [],
+        "recommendations": [],
+    }
+
+    report = format_feature_drift_report(summary)
+
+    assert "Raw Framing Comparison" in report
+    assert "raw_feature" in report
+    assert "normalized_feature" in report
 
 
 def test_ablation_name_strips_phase_prefix() -> None:

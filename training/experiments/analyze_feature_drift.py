@@ -26,6 +26,7 @@ def analyze_feature_drift(
     output_dir: str | Path,
     clean_dataset: str | Path | None = None,
     limit_samples: int | None = None,
+    include_raw_comparison: bool = False,
 ) -> dict[str, Any]:
     if not datasets:
         raise ValueError("At least one dataset is required.")
@@ -33,9 +34,9 @@ def analyze_feature_drift(
     dataset_paths = [Path(dataset) for dataset in datasets]
     clean_path = Path(clean_dataset) if clean_dataset is not None else dataset_paths[0]
     feature_names = get_feature_names()
-    clean_features = extract_dataset_features(clean_path, feature_names, limit_samples=limit_samples)
+    clean_features = extract_dataset_features(clean_path, feature_names, limit_samples=limit_samples, normalize=True)
     dataset_features = {
-        ablation_name(path): extract_dataset_features(path, feature_names, limit_samples=limit_samples)
+        ablation_name(path): extract_dataset_features(path, feature_names, limit_samples=limit_samples, normalize=True)
         for path in dataset_paths
     }
     clean_name = ablation_name(clean_path)
@@ -43,28 +44,46 @@ def analyze_feature_drift(
         dataset_features[clean_name] = clean_features
 
     summary = build_feature_drift_summary(dataset_features, clean_name, feature_names)
+    raw_summary = None
+    if include_raw_comparison:
+        raw_clean_features = extract_dataset_features(clean_path, feature_names, limit_samples=limit_samples, normalize=False)
+        raw_dataset_features = {
+            ablation_name(path): extract_dataset_features(path, feature_names, limit_samples=limit_samples, normalize=False)
+            for path in dataset_paths
+        }
+        if clean_name not in raw_dataset_features:
+            raw_dataset_features[clean_name] = raw_clean_features
+        raw_summary = build_feature_drift_summary(raw_dataset_features, clean_name, feature_names)
+        summary["raw_top_drift_by_ablation"] = raw_summary["top_drift_by_ablation"]
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     summary_path = output_path / SUMMARY_FILENAME
     report_path = output_path / REPORT_FILENAME
     results_path = output_path / RESULTS_FILENAME
+    raw_results_path = output_path / "raw_feature_drift.csv"
 
     _write_json(summary_path, summary)
     report_path.write_text(format_feature_drift_report(summary), encoding="utf-8")
     write_feature_drift_csv(results_path, summary["rows"])
+    if raw_summary is not None:
+        write_feature_drift_csv(raw_results_path, raw_summary["rows"])
 
-    return {
+    result = {
         "summary_path": str(summary_path),
         "report_path": str(report_path),
         "results_path": str(results_path),
         "summary": summary,
     }
+    if raw_summary is not None:
+        result["raw_results_path"] = str(raw_results_path)
+    return result
 
 
 def extract_dataset_features(
     dataset_root: str | Path,
     feature_names: list[str] | None = None,
     limit_samples: int | None = None,
+    normalize: bool = True,
 ) -> dict[str, Any]:
     dataset = SyntheticBodyDataset(dataset_root, split="all")
     names = feature_names or get_feature_names()
@@ -73,7 +92,7 @@ def extract_dataset_features(
     for index, sample in enumerate(dataset):
         if limit_samples is not None and index >= limit_samples:
             break
-        features = extract_front_side_features(sample["front_image_path"], sample["side_image_path"])
+        features = extract_front_side_features(sample["front_image_path"], sample["side_image_path"], normalize=normalize)
         sample_ids.append(sample["sample_id"])
         rows.append([float(features[name]) for name in names])
     if not rows:
@@ -83,6 +102,7 @@ def extract_dataset_features(
         "sample_ids": sample_ids,
         "feature_names": names,
         "matrix": np.asarray(rows, dtype=np.float64),
+        "normalize": normalize,
     }
 
 
@@ -192,6 +212,18 @@ def format_feature_drift_report(summary: dict[str, Any]) -> str:
             ]
         )
     lines.extend(["## Recommendations", "", *[f"- {note}" for note in summary["recommendations"]], ""])
+    raw_top = summary.get("raw_top_drift_by_ablation")
+    if raw_top:
+        lines.extend(["", "## Raw Framing Comparison", ""])
+        for ablation, rows in raw_top.items():
+            if ablation == summary["clean_dataset"]:
+                continue
+            normalized_top = summary["top_drift_by_ablation"][ablation][0]
+            raw_feature = rows[0]
+            lines.append(
+                f"- `{ablation}` raw top drift `{raw_feature['feature']}` = {_format_float(raw_feature['mean_abs_drift'])}; "
+                f"normalized top drift `{normalized_top['feature']}` = {_format_float(normalized_top['mean_abs_drift'])}."
+            )
     return "\n".join(lines)
 
 
@@ -261,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--clean-dataset", required=True, help="Clean baseline dataset root.")
     parser.add_argument("--output", required=True, help="Output directory for feature drift reports.")
     parser.add_argument("--limit-samples", type=int)
+    parser.add_argument("--include-raw-comparison", action="store_true")
     args = parser.parse_args(argv)
 
     result = analyze_feature_drift(
@@ -268,10 +301,13 @@ def main(argv: list[str] | None = None) -> int:
         args.output,
         clean_dataset=args.clean_dataset,
         limit_samples=args.limit_samples,
+        include_raw_comparison=args.include_raw_comparison,
     )
     print(f"Summary: {result['summary_path']}")
     print(f"Report: {result['report_path']}")
     print(f"Results: {result['results_path']}")
+    if "raw_results_path" in result:
+        print(f"Raw results: {result['raw_results_path']}")
     return 0
 
 
