@@ -125,6 +125,67 @@ def render_side_silhouette(profile: BodyProfile, output_path: str, width: int, h
     _save(image, output_path)
 
 
+def render_back_silhouette(profile: BodyProfile, output_path: str, width: int, height: int) -> None:
+    image, draw = _canvas(width, height)
+    cx = width // 2
+    top = int(height * 0.07)
+    bottom = int(height * 0.94)
+    body_height = bottom - top
+
+    shoulder_w = _scale(profile.shoulder_cm, 35, 60, width * 0.22, width * 0.40)
+    across_back_w = _scale((profile.shoulder_cm * 0.72) + (profile.chest_cm * 0.18), 39, 66, width * 0.19, width * 0.36)
+    waist_w = _scale(profile.waist_cm, 55, 125, width * 0.12, width * 0.30)
+    hip_w = _scale(profile.hip_cm, 75, 135, width * 0.18, width * 0.37)
+    thigh_w = _scale(profile.thigh_cm, 40, 80, width * 0.07, width * 0.14)
+    calf_w = _scale(profile.calf_cm, 28, 55, width * 0.045, width * 0.095)
+
+    head_r = int(body_height * 0.055)
+    neck_w = int(_scale(profile.neck_cm, 30, 50, width * 0.04, width * 0.08))
+    head_cy = top + head_r
+    neck_y = top + int(body_height * 0.13)
+    shoulder_y = top + int(body_height * 0.18)
+    upper_back_y = top + int(body_height * 0.28)
+    waist_y = top + int(body_height * 0.46)
+    hip_y = top + int(body_height * 0.58)
+    knee_y = top + int(body_height * 0.79)
+    ankle_y = bottom - int(body_height * 0.03)
+
+    draw.ellipse((cx - head_r, head_cy - head_r, cx + head_r, head_cy + head_r), fill="black")
+    draw.rounded_rectangle((cx - neck_w // 2, neck_y, cx + neck_w // 2, shoulder_y + 8), radius=8, fill="black")
+    torso = [
+        (cx - shoulder_w / 2, shoulder_y),
+        (cx - across_back_w / 2, upper_back_y),
+        (cx - waist_w / 2, waist_y),
+        (cx - hip_w / 2, hip_y),
+        (cx + hip_w / 2, hip_y),
+        (cx + waist_w / 2, waist_y),
+        (cx + across_back_w / 2, upper_back_y),
+        (cx + shoulder_w / 2, shoulder_y),
+    ]
+    draw.polygon(torso, fill="black")
+
+    arm_w = max(12, int(width * 0.035))
+    for side in (-1, 1):
+        shoulder_x = cx + side * (shoulder_w / 2)
+        wrist_x = cx + side * (hip_w / 2 + width * 0.075)
+        wrist_y = top + int(body_height * 0.58)
+        draw.line((shoulder_x, shoulder_y + 8, wrist_x, wrist_y), fill="black", width=arm_w)
+        draw.ellipse((wrist_x - arm_w / 2, wrist_y - arm_w / 2, wrist_x + arm_w / 2, wrist_y + arm_w / 2), fill="black")
+
+    gap = int(width * 0.025)
+    for side in (-1, 1):
+        hip_inner = cx + side * gap
+        hip_outer = cx + side * (hip_w / 2 * 0.78)
+        knee_inner = cx + side * gap
+        knee_outer = cx + side * thigh_w
+        ankle_inner = cx + side * (gap * 0.7)
+        ankle_outer = cx + side * calf_w
+        leg = [(hip_inner, hip_y), (hip_outer, hip_y), (knee_outer, knee_y), (ankle_outer, ankle_y), (ankle_inner, ankle_y), (knee_inner, knee_y)]
+        draw.polygon(leg, fill="black")
+
+    _save(image, output_path)
+
+
 def _canvas(width: int, height: int) -> tuple[Image.Image, ImageDraw.ImageDraw]:
     image = Image.new("RGB", (width, height), "white")
     return image, ImageDraw.Draw(image)

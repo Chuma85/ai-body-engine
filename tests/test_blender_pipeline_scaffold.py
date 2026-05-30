@@ -38,6 +38,7 @@ PHASE_3N_CONFIG_PATHS = [
     "synthetic/blender/configs/phase_3n_skin_tone_only_config.example.json",
     "synthetic/blender/configs/phase_3n_combined_realism_config.example.json",
 ]
+PHASE_5L_CONFIG_PATH = "synthetic/blender/configs/phase_5l_back_view_shoulder_benchmark_config.example.json"
 
 
 def test_example_render_config_loads_and_validates() -> None:
@@ -695,11 +696,25 @@ def test_phase_2i_camera_transforms_use_true_front_and_side_views() -> None:
 
     front_location, front_rotation = module.camera_transform_for_view("front", (0.0, 0.0, 1.5), 4.0)
     side_location, side_rotation = module.camera_transform_for_view("side", (0.0, 0.0, 1.5), 4.0)
+    back_location, back_rotation = module.camera_transform_for_view("back", (0.0, 0.0, 1.5), 4.0)
 
     assert front_location == (0.0, -4.0, 1.5)
     assert front_rotation == (math.pi / 2, 0, 0)
     assert side_location == (-4.0, 0.0, 1.5)
     assert side_rotation == (math.pi / 2, 0, -math.pi / 2)
+    assert back_location == (0.0, 4.0, 1.5)
+    assert back_rotation == (math.pi / 2, 0, math.pi)
+
+
+def test_phase_5l_back_view_config_loads_and_validates() -> None:
+    config = load_render_config(PHASE_5L_CONFIG_PATH)
+
+    assert config.generator_version == "phase_5l_back_view_shoulder_benchmark_v1"
+    assert config.output_dir == "data/synthetic/phase_5l_back_view_shoulder_benchmark"
+    assert config.sample_count == 360
+    assert config.views == ["front", "side", "back"]
+    assert config.variation_controls is not None
+    assert config.variation_controls["body_shape_profiles"]["broad"]["body_parameter_ranges"]["shoulder_cm"] == [48, 62]
 
 
 def test_phase_2i_orthographic_scale_keeps_full_body_visible_in_portrait_frame() -> None:

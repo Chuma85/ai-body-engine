@@ -1,0 +1,21 @@
+{
+  "back_image_count": 360,
+  "dataset": "artifacts\\phase_5l_back_view_shoulder_benchmark\\dataset",
+  "errors": [],
+  "front_image_count": 360,
+  "label_row_count": 360,
+  "label_rows_missing_image_pairs": [],
+  "missing_paths": [],
+  "pairs_missing_label_rows": [],
+  "require_back": true,
+  "sample_count": 360,
+  "side_image_count": 360,
+  "unpaired_back_samples": [],
+  "unpaired_front_samples": [],
+  "unpaired_side_samples": [],
+  "unreadable_images": [],
+  "valid": true,
+  "warnings": [
+    "TODO future phase: front/side camera orientation is configured by the renderer but not automatically validated yet; inspect rendered views visually."
+  ]
+}

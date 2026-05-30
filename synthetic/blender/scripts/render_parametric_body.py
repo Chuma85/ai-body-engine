@@ -88,6 +88,7 @@ LABEL_COLUMNS = [
     "sample_id",
     "front_image_path",
     "side_image_path",
+    "back_image_path",
     "height_cm",
     "weight_kg",
     "chest_cm",
@@ -141,12 +142,17 @@ def main() -> None:
         params = generate_body_parameters(index, body_rng, config)
         if config.get("anatomy", {}).get("enable_body_shape_adjustments", False):
             params = apply_body_shape_adjustments(params)
-        front_path = output_dirs["front"] / f"{params['sample_id']}_front.png"
-        side_path = output_dirs["side"] / f"{params['sample_id']}_side.png"
+        view_paths = {
+            view: output_dirs[view] / f"{params['sample_id']}_{view}.png"
+            for view in configured_views(config)
+        }
+        front_path = view_paths["front"]
+        side_path = view_paths["side"]
+        back_path = view_paths.get("back")
 
-        resume_action = resume_action_for_sample(params["sample_id"], front_path, side_path, labeled_sample_ids)
+        resume_action = resume_action_for_sample(params["sample_id"], front_path, side_path, labeled_sample_ids, back_path)
         if args.resume and resume_action in {"skip", "checkpoint_existing_pair"}:
-            row = label_row_for_sample(params, config, front_path, side_path, resume_render_metadata(config))
+            row = label_row_for_sample(params, config, front_path, side_path, resume_render_metadata(config), back_path=back_path)
             if resume_action == "checkpoint_existing_pair":
                 append_label_row(labels_path, row)
                 labeled_sample_ids.add(params["sample_id"])
@@ -164,41 +170,25 @@ def main() -> None:
         render_metadata = create_body_from_config(bpy, params, config, material)
         setup_lighting(bpy, config, render_rng)
 
-        front_camera_jitter = camera_jitter(config, render_rng)
-        front_camera = setup_camera(bpy, "front", config["camera_distance"], config["camera_focal_length"], front_camera_jitter)
-        if render_metadata.get("objects") and (config.get("camera") or {}).get("auto_frame_body", False):
-            auto_frame_camera_to_objects(
-                bpy,
-                front_camera,
-                render_metadata["objects"],
-                "front",
-                (config.get("camera") or {}).get("margin", 0.15),
-                config["camera_focal_length"],
-                config["image_width"],
-                config["image_height"],
-                config["camera_distance"],
-                front_camera_jitter,
-            )
-        render_view(bpy, front_path, config["image_width"], config["image_height"])
+        for view in configured_views(config):
+            view_camera_jitter = camera_jitter(config, render_rng)
+            camera = setup_camera(bpy, view, config["camera_distance"], config["camera_focal_length"], view_camera_jitter)
+            if render_metadata.get("objects") and (config.get("camera") or {}).get("auto_frame_body", False):
+                auto_frame_camera_to_objects(
+                    bpy,
+                    camera,
+                    render_metadata["objects"],
+                    view,
+                    (config.get("camera") or {}).get("margin", 0.15),
+                    config["camera_focal_length"],
+                    config["image_width"],
+                    config["image_height"],
+                    config["camera_distance"],
+                    view_camera_jitter,
+                )
+            render_view(bpy, view_paths[view], config["image_width"], config["image_height"])
 
-        side_camera_jitter = camera_jitter(config, render_rng)
-        side_camera = setup_camera(bpy, "side", config["camera_distance"], config["camera_focal_length"], side_camera_jitter)
-        if render_metadata.get("objects") and (config.get("camera") or {}).get("auto_frame_body", False):
-            auto_frame_camera_to_objects(
-                bpy,
-                side_camera,
-                render_metadata["objects"],
-                "side",
-                (config.get("camera") or {}).get("margin", 0.15),
-                config["camera_focal_length"],
-                config["image_width"],
-                config["image_height"],
-                config["camera_distance"],
-                side_camera_jitter,
-            )
-        render_view(bpy, side_path, config["image_width"], config["image_height"])
-
-        row = label_row_for_sample(params, config, front_path, side_path, render_metadata)
+        row = label_row_for_sample(params, config, front_path, side_path, render_metadata, back_path=back_path)
         if params["sample_id"] not in labeled_sample_ids:
             append_label_row(labels_path, row)
             labeled_sample_ids.add(params["sample_id"])
@@ -296,7 +286,24 @@ def _deep_update(base: dict, updates: dict) -> dict:
     return base
 
 
-def label_row_for_sample(params: dict, config: dict, front_path: Path, side_path: Path, render_metadata: dict) -> dict:
+def configured_views(config: dict) -> list[str]:
+    views = list(config.get("views") or ["front", "side"])
+    if "front" not in views or "side" not in views:
+        raise ValueError("Configured views must include front and side.")
+    unsupported = sorted(set(views) - {"front", "side", "back"})
+    if unsupported:
+        raise ValueError(f"Unsupported configured views: {', '.join(unsupported)}")
+    return views
+
+
+def label_row_for_sample(
+    params: dict,
+    config: dict,
+    front_path: Path,
+    side_path: Path,
+    render_metadata: dict,
+    back_path: Path | None = None,
+) -> dict:
     rng_seeds = resolved_rng_seeds(config)
     realism_controls = render_realism_controls(config)
     render_realism_config = config.get("render_realism") or {}
@@ -304,6 +311,7 @@ def label_row_for_sample(params: dict, config: dict, front_path: Path, side_path
         "sample_id": params["sample_id"],
         "front_image_path": repo_relative_path(front_path),
         "side_image_path": repo_relative_path(side_path),
+        "back_image_path": repo_relative_path(back_path) if back_path is not None else "",
         "height_cm": params["height_cm"],
         "weight_kg": params["weight_kg"],
         "chest_cm": params["chest_cm"],
@@ -367,8 +375,11 @@ def resume_render_metadata(config: dict) -> dict[str, object]:
     }
 
 
-def resume_action_for_sample(sample_id: str, front_path: Path, side_path: Path, labeled_sample_ids: set[str]) -> str:
-    if front_path.exists() and side_path.exists():
+def resume_action_for_sample(sample_id: str, front_path: Path, side_path: Path, labeled_sample_ids: set[str], back_path: Path | None = None) -> str:
+    expected_paths = [front_path, side_path]
+    if back_path is not None:
+        expected_paths.append(back_path)
+    if all(path.exists() for path in expected_paths):
         if sample_id in labeled_sample_ids:
             return "skip"
         return "checkpoint_existing_pair"
@@ -409,6 +420,7 @@ def ensure_output_dirs(output_dir: str | Path) -> dict[str, Path]:
     paths = {
         "front": root / "images" / "front",
         "side": root / "images" / "side",
+        "back": root / "images" / "back",
         "labels": root / "labels",
     }
 
@@ -1106,12 +1118,14 @@ def camera_transform_for_view(
         return (center_x, center_y - distance, center_z), (math.pi / 2, 0, 0)
     if view == "side":
         return (center_x - distance, center_y, center_z), (math.pi / 2, 0, -math.pi / 2)
+    if view == "back":
+        return (center_x, center_y + distance, center_z), (math.pi / 2, 0, math.pi)
     raise ValueError(f"Unsupported view: {view}")
 
 
 def camera_center_with_jitter(view: str, center: tuple[float, float, float], jitter: dict[str, float]) -> tuple[float, float, float]:
     center_x, center_y, center_z = center
-    if view == "front":
+    if view in {"front", "back"}:
         return (center_x + jitter["lateral_offset"], center_y, center_z + jitter["vertical_offset"])
     if view == "side":
         return (center_x, center_y + jitter["lateral_offset"], center_z + jitter["vertical_offset"])
@@ -1121,7 +1135,7 @@ def camera_center_with_jitter(view: str, center: tuple[float, float, float], jit
 def camera_frame_dimensions(bounds: tuple[float, float, float, float, float, float], view: str) -> tuple[float, float, float]:
     min_x, max_x, min_y, max_y, min_z, max_z = bounds
     height = max(max_z - min_z, 0.1)
-    if view == "front":
+    if view in {"front", "back"}:
         return max(max_x - min_x, 0.1), height, max(max_y - min_y, 0.1)
     if view == "side":
         return max(max_y - min_y, 0.1), height, max(max_x - min_x, 0.1)

@@ -61,13 +61,17 @@ class SyntheticBodyDataset:
 
         front_image_path = self._resolve_path(manifest_row["front_image_path"])
         side_image_path = self._resolve_path(manifest_row["side_image_path"])
+        back_image_path = self._resolve_optional_path(manifest_row.get("back_image_path", ""))
         self._require_existing_file(front_image_path, "front image", sample_id)
         self._require_existing_file(side_image_path, "side image", sample_id)
+        if back_image_path is not None:
+            self._require_existing_file(back_image_path, "back image", sample_id)
 
         sample = {
             "sample_id": sample_id,
             "front_image_path": front_image_path,
             "side_image_path": side_image_path,
+            "back_image_path": back_image_path,
             "dataset_split": manifest_row["dataset_split"],
             "label_row_index": int(manifest_row["label_row_index"]),
             "labels": label_row,
@@ -79,6 +83,8 @@ class SyntheticBodyDataset:
         if self.load_images:
             sample["front_image_bytes"] = front_image_path.read_bytes()
             sample["side_image_bytes"] = side_image_path.read_bytes()
+            if back_image_path is not None:
+                sample["back_image_bytes"] = back_image_path.read_bytes()
 
         return sample
 
@@ -127,6 +133,11 @@ class SyntheticBodyDataset:
         if path.is_absolute():
             return path
         return (Path.cwd() / path).resolve()
+
+    def _resolve_optional_path(self, path_value: str) -> Path | None:
+        if path_value in ("", None):
+            return None
+        return self._resolve_path(path_value)
 
     @staticmethod
     def _require_existing_file(path: Path, label: str, sample_id: str) -> None:

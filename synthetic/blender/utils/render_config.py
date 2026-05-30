@@ -73,6 +73,9 @@ def validate_render_config(config: RenderConfig) -> None:
         errors.append("output_dir must not be empty")
     if "front" not in config.views or "side" not in config.views:
         errors.append("views must include both front and side")
+    unsupported_views = sorted(set(config.views) - {"front", "side", "back"})
+    if unsupported_views:
+        errors.append(f"unsupported views: {', '.join(unsupported_views)}")
 
     missing_keys = [key for key in REQUIRED_BODY_PARAMETER_KEYS if key not in config.body_parameter_ranges]
     if missing_keys:

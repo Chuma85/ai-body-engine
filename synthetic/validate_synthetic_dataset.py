@@ -12,16 +12,18 @@ from synthetic.blender.scripts.render_parametric_body import LABEL_COLUMNS
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 FRONT_SUFFIX = "_front.png"
 SIDE_SUFFIX = "_side.png"
+BACK_SUFFIX = "_back.png"
 ORIENTATION_WARNING = (
     "TODO future phase: front/side camera orientation is configured by the renderer "
     "but not automatically validated yet; inspect rendered views visually."
 )
 
 
-def validate_dataset(dataset: str | Path) -> dict[str, Any]:
+def validate_dataset(dataset: str | Path, require_back: bool = False) -> dict[str, Any]:
     dataset_root = Path(dataset)
     front_dir = dataset_root / "images" / "front"
     side_dir = dataset_root / "images" / "side"
+    back_dir = dataset_root / "images" / "back"
     labels_path = dataset_root / "labels" / "labels.csv"
     result: dict[str, Any] = {
         "valid": False,
@@ -30,11 +32,14 @@ def validate_dataset(dataset: str | Path) -> dict[str, Any]:
         "label_row_count": 0,
         "front_image_count": 0,
         "side_image_count": 0,
+        "back_image_count": 0,
+        "require_back": require_back,
         "errors": [],
         "warnings": [ORIENTATION_WARNING],
         "missing_paths": [],
         "unpaired_front_samples": [],
         "unpaired_side_samples": [],
+        "unpaired_back_samples": [],
         "pairs_missing_label_rows": [],
         "label_rows_missing_image_pairs": [],
         "unreadable_images": [],
@@ -46,6 +51,8 @@ def validate_dataset(dataset: str | Path) -> dict[str, Any]:
         _add_missing_path(result, front_dir)
     if not side_dir.exists():
         _add_missing_path(result, side_dir)
+    if require_back and not back_dir.exists():
+        _add_missing_path(result, back_dir)
     if not labels_path.exists():
         _add_missing_path(result, labels_path)
 
@@ -54,31 +61,42 @@ def validate_dataset(dataset: str | Path) -> dict[str, Any]:
 
     front_images = sorted(front_dir.glob("*.png"))
     side_images = sorted(side_dir.glob("*.png"))
+    back_images = sorted(back_dir.glob("*.png")) if back_dir.exists() else []
     result["front_image_count"] = len(front_images)
     result["side_image_count"] = len(side_images)
+    result["back_image_count"] = len(back_images)
 
     front_samples = _sample_map(front_images, FRONT_SUFFIX, result)
     side_samples = _sample_map(side_images, SIDE_SUFFIX, result)
+    back_samples = _sample_map(back_images, BACK_SUFFIX, result)
     label_rows = _read_label_rows(labels_path, result)
     label_samples = {row.get("sample_id", "") for row in label_rows if row.get("sample_id")}
 
     result["label_row_count"] = len(label_rows)
-    result["sample_count"] = len(front_samples & side_samples & label_samples)
+    paired_samples = front_samples & side_samples
+    if require_back:
+        paired_samples &= back_samples
+    result["sample_count"] = len(paired_samples & label_samples)
     result["unpaired_front_samples"] = sorted(front_samples - side_samples)
     result["unpaired_side_samples"] = sorted(side_samples - front_samples)
-    result["pairs_missing_label_rows"] = sorted((front_samples & side_samples) - label_samples)
-    result["label_rows_missing_image_pairs"] = sorted(label_samples - (front_samples & side_samples))
+    if require_back:
+        result["unpaired_front_samples"] = sorted(set(result["unpaired_front_samples"]) | (front_samples - back_samples))
+        result["unpaired_side_samples"] = sorted(set(result["unpaired_side_samples"]) | (side_samples - back_samples))
+        result["unpaired_back_samples"] = sorted(back_samples - (front_samples & side_samples))
+    result["pairs_missing_label_rows"] = sorted(paired_samples - label_samples)
+    result["label_rows_missing_image_pairs"] = sorted(label_samples - paired_samples)
 
     for key in (
         "unpaired_front_samples",
         "unpaired_side_samples",
+        "unpaired_back_samples",
         "pairs_missing_label_rows",
         "label_rows_missing_image_pairs",
     ):
         if result[key]:
             result["errors"].append(f"{key}: {', '.join(result[key])}")
 
-    for image_path in [*front_images, *side_images]:
+    for image_path in [*front_images, *side_images, *back_images]:
         if not is_readable_png(image_path):
             result["unreadable_images"].append(str(image_path))
 
@@ -189,6 +207,7 @@ def format_validation_report(result: dict[str, Any]) -> str:
         f"Samples complete: {result['sample_count']}",
         f"Front PNGs: {result['front_image_count']}",
         f"Side PNGs: {result['side_image_count']}",
+        f"Back PNGs: {result['back_image_count']}",
         f"Label rows: {result['label_row_count']}",
     ]
 

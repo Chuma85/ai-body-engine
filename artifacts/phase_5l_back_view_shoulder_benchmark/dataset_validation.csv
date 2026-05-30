@@ -1,0 +1,2 @@
+valid,dataset,sample_count,front_image_count,side_image_count,back_image_count,label_row_count,errors,warnings
+True,artifacts\phase_5l_back_view_shoulder_benchmark\dataset,360,360,360,360,360,,TODO future phase: front/side camera orientation is configured by the renderer but not automatically validated yet; inspect rendered views visually.

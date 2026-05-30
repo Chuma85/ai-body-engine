@@ -13,15 +13,16 @@ MANIFEST_COLUMNS = [
     "sample_id",
     "front_image_path",
     "side_image_path",
+    "back_image_path",
     "label_row_index",
     "dataset_split",
 ]
 DEFAULT_SPLIT_SEED = 42
 
 
-def build_dataset_manifest(dataset: str | Path, split_seed: int = DEFAULT_SPLIT_SEED) -> dict[str, Any]:
+def build_dataset_manifest(dataset: str | Path, split_seed: int = DEFAULT_SPLIT_SEED, require_back: bool = False) -> dict[str, Any]:
     dataset_root = Path(dataset)
-    validation = validate_dataset(dataset_root)
+    validation = validate_dataset(dataset_root, require_back=require_back)
     if not validation["valid"]:
         return {
             "valid": False,
@@ -43,7 +44,7 @@ def build_dataset_manifest(dataset: str | Path, split_seed: int = DEFAULT_SPLIT_
             "errors": parse_result["errors"],
         }
 
-    manifest_rows = _manifest_rows(dataset_root, label_rows, split_seed)
+    manifest_rows = _manifest_rows(dataset_root, label_rows, split_seed, require_back=require_back)
     manifest_path = dataset_root / "manifest.csv"
     with manifest_path.open("w", newline="", encoding="utf-8") as manifest_file:
         writer = csv.DictWriter(manifest_file, fieldnames=MANIFEST_COLUMNS)
@@ -64,7 +65,7 @@ def build_dataset_manifest(dataset: str | Path, split_seed: int = DEFAULT_SPLIT_
     }
 
 
-def _manifest_rows(dataset_root: Path, label_rows: list[dict[str, str]], split_seed: int) -> list[dict[str, str]]:
+def _manifest_rows(dataset_root: Path, label_rows: list[dict[str, str]], split_seed: int, require_back: bool = False) -> list[dict[str, str]]:
     rows_by_sample = {row["sample_id"]: (index, row) for index, row in enumerate(label_rows)}
     sample_ids = sorted(rows_by_sample)
     shuffled_sample_ids = [*sample_ids]
@@ -79,6 +80,9 @@ def _manifest_rows(dataset_root: Path, label_rows: list[dict[str, str]], split_s
                 "sample_id": sample_id,
                 "front_image_path": (dataset_root / "images" / "front" / f"{sample_id}_front.png").as_posix(),
                 "side_image_path": (dataset_root / "images" / "side" / f"{sample_id}_side.png").as_posix(),
+                "back_image_path": (
+                    dataset_root / "images" / "back" / f"{sample_id}_back.png"
+                ).as_posix() if require_back or (dataset_root / "images" / "back" / f"{sample_id}_back.png").exists() else "",
                 "label_row_index": str(label_row_index),
                 "dataset_split": splits[sample_id],
             }
@@ -131,9 +135,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build a deterministic manifest for a validated synthetic dataset.")
     parser.add_argument("--dataset", required=True, help="Synthetic dataset root, such as data/synthetic/phase_2k.")
     parser.add_argument("--split-seed", type=int, default=DEFAULT_SPLIT_SEED)
+    parser.add_argument("--require-back", action="store_true")
     args = parser.parse_args(argv)
 
-    result = build_dataset_manifest(args.dataset, split_seed=args.split_seed)
+    result = build_dataset_manifest(args.dataset, split_seed=args.split_seed, require_back=args.require_back)
     print(format_manifest_report(result))
     return 0 if result["valid"] else 1
 
