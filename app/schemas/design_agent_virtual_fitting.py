@@ -38,6 +38,7 @@ class PreviewStatus(str, Enum):
 
 class RendererProviderMode(str, Enum):
     DEMO_SYNTHETIC = "demo_synthetic"
+    BETA_2D_CONCEPT = "beta_2d_concept"
     LOCAL_PLACEHOLDER = "local_placeholder"
     EXTERNAL_RENDERER = "external_renderer"
     UNAVAILABLE = "unavailable"
@@ -54,6 +55,7 @@ class RenderStatus(str, Enum):
 class FittingPreviewKind(str, Enum):
     FIT_SUMMARY_OVERLAY = "fit_summary_overlay"
     MANNEQUIN_DESIGN_CONCEPT = "mannequin_design_concept"
+    BETA_2D_MANNEQUIN_CONCEPT = "beta_2d_mannequin_concept"
     BETA_PLACEHOLDER = "beta_placeholder"
 
 

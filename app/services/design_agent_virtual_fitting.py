@@ -23,6 +23,7 @@ from app.schemas.design_agent_virtual_fitting import (
     utc_now,
 )
 from app.services.fitting_asset_pipeline import (
+    Beta2DConceptRendererProvider,
     DemoSyntheticRendererProvider,
     FittingAssetPipelineService,
     LocalPlaceholderRendererProvider,
@@ -180,6 +181,8 @@ def pipeline_for_request(
         return default_pipeline
     if request.renderer_provider is RendererProviderMode.UNAVAILABLE:
         return FittingAssetPipelineService(UnavailableRendererProvider())
+    if request.renderer_provider is RendererProviderMode.BETA_2D_CONCEPT:
+        return FittingAssetPipelineService(Beta2DConceptRendererProvider())
     if request.renderer_provider is RendererProviderMode.LOCAL_PLACEHOLDER:
         return FittingAssetPipelineService(LocalPlaceholderRendererProvider())
     return FittingAssetPipelineService(UnavailableRendererProvider())
