@@ -17,9 +17,16 @@ from app.schemas.design_agent_virtual_fitting import (
     DesignSessionStatus,
     GeneratedDesignOption,
     ProductionBrief,
+    RendererProviderMode,
     VirtualFittingRequest,
     VirtualFittingResult,
     utc_now,
+)
+from app.services.fitting_asset_pipeline import (
+    DemoSyntheticRendererProvider,
+    FittingAssetPipelineService,
+    LocalPlaceholderRendererProvider,
+    UnavailableRendererProvider,
 )
 from training.measurements.measurement_snapshot_store import (
     MeasurementSnapshotError,
@@ -114,21 +121,37 @@ class DesignStylingAgent:
 class VirtualFittingEngine:
     """Service boundary for fitting previews; currently returns safe synthetic contracts."""
 
+    def __init__(self, asset_pipeline: FittingAssetPipelineService | None = None) -> None:
+        self.asset_pipeline = asset_pipeline or FittingAssetPipelineService()
+
     def preview(
         self,
         design_option: GeneratedDesignOption,
         body_profile: BodyProfileSnapshot,
         request: VirtualFittingRequest,
+        design_session_id: str | None = None,
     ) -> VirtualFittingResult:
         warnings = list(body_profile.warnings)
         if body_profile.synthetic_calibrated_only:
             warnings.append("Body profile is synthetic-calibrated/internal-preview only.")
+        fitting_result_id = f"fitting_result_{uuid4().hex}"
+        asset_pipeline = pipeline_for_request(request, self.asset_pipeline)
+        asset_result = asset_pipeline.generate_assets(
+            design_session_id=design_session_id,
+            fitting_result_id=fitting_result_id,
+            fitting_request=request,
+            body_profile=body_profile,
+            design_option=design_option,
+        )
+        preview_asset_references = [
+            asset.asset_uri or asset.image_url or asset.asset_id for asset in asset_result.assets
+        ] or [f"synthetic://virtual-fitting/{body_profile.body_profile_snapshot_id}/{design_option.design_option_id}"]
         return VirtualFittingResult(
-            fitting_result_id=f"fitting_result_{uuid4().hex}",
+            fitting_result_id=fitting_result_id,
             design_option_id=design_option.design_option_id,
-            preview_asset_references=[
-                f"synthetic://virtual-fitting/{body_profile.body_profile_snapshot_id}/{design_option.design_option_id}"
-            ],
+            preview_asset_references=preview_asset_references,
+            fitting_preview_assets=asset_result.assets,
+            asset_manifest=asset_result.asset_manifest,
             fit_summary=(
                 f"Demo preview prepared for {design_option.title} against body profile "
                 f"{body_profile.body_profile_snapshot_id}."
@@ -138,13 +161,28 @@ class VirtualFittingEngine:
                 "Check high-movement areas manually during maker review.",
             ],
             looseness_notes=["Ease and drape are advisory placeholders until a validated renderer is integrated."],
-            caution_notes=[BETA_FITTING_DISCLAIMER, *warnings],
+            caution_notes=list(dict.fromkeys([BETA_FITTING_DISCLAIMER, *warnings, *asset_result.warnings])),
             confidence_metadata={
                 "mode": request.preview_mode,
                 "maker_review_required": request.maker_review_required,
                 "real_world_validated": body_profile.real_world_validated,
+                "renderer_provider": asset_result.renderer_provider.value,
+                "render_status": asset_result.render_status.value,
             },
         )
+
+
+def pipeline_for_request(
+    request: VirtualFittingRequest,
+    default_pipeline: FittingAssetPipelineService,
+) -> FittingAssetPipelineService:
+    if request.renderer_provider is RendererProviderMode.DEMO_SYNTHETIC:
+        return default_pipeline
+    if request.renderer_provider is RendererProviderMode.UNAVAILABLE:
+        return FittingAssetPipelineService(UnavailableRendererProvider())
+    if request.renderer_provider is RendererProviderMode.LOCAL_PLACEHOLDER:
+        return FittingAssetPipelineService(LocalPlaceholderRendererProvider())
+    return FittingAssetPipelineService(UnavailableRendererProvider())
 
 
 class DesignSessionService:
@@ -222,7 +260,7 @@ class DesignSessionService:
     def create_fitting_preview(self, design_session_id: str, request: VirtualFittingRequest) -> DesignSession:
         session = self.get_session(design_session_id)
         option = find_option(session, request.design_option_id)
-        result = self.fitting_engine.preview(option, session.body_profile_snapshot, request)
+        result = self.fitting_engine.preview(option, session.body_profile_snapshot, request, session.design_session_id)
         updated = session_copy(
             session,
             selected_design_option_id=option.design_option_id,
@@ -393,4 +431,3 @@ def session_copy(session: DesignSession, **updates: Any) -> DesignSession:
     if hasattr(session, "model_copy"):
         return session.model_copy(update=updates)
     return session.copy(update=updates)
-

@@ -36,6 +36,35 @@ class PreviewStatus(str, Enum):
     PENDING_RENDER_BACKEND = "pending_render_backend"
 
 
+class RendererProviderMode(str, Enum):
+    DEMO_SYNTHETIC = "demo_synthetic"
+    LOCAL_PLACEHOLDER = "local_placeholder"
+    EXTERNAL_RENDERER = "external_renderer"
+    UNAVAILABLE = "unavailable"
+
+
+class RenderStatus(str, Enum):
+    PENDING = "pending"
+    GENERATED = "generated"
+    FAILED = "failed"
+    UNAVAILABLE = "unavailable"
+    DEMO_PLACEHOLDER = "demo_placeholder"
+
+
+class FittingPreviewKind(str, Enum):
+    FIT_SUMMARY_OVERLAY = "fit_summary_overlay"
+    MANNEQUIN_DESIGN_CONCEPT = "mannequin_design_concept"
+    BETA_PLACEHOLDER = "beta_placeholder"
+
+
+class FittingPreviewAssetType(str, Enum):
+    IMAGE = "image"
+    THUMBNAIL = "thumbnail"
+    MANIFEST = "manifest"
+    MANNEQUIN_OVERLAY = "mannequin_overlay"
+    GARMENT_OVERLAY = "garment_overlay"
+
+
 class DesignPreferenceInput(BaseModel):
     garment_type: str = Field(..., min_length=1)
     color_palette: list[str] = Field(default_factory=list)
@@ -74,6 +103,76 @@ class GeneratedDesignOption(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class FittingPreviewAsset(BaseModel):
+    asset_id: str
+    asset_type: FittingPreviewAssetType
+    preview_kind: FittingPreviewKind
+    render_status: RenderStatus
+    renderer_provider: RendererProviderMode
+    image_url: str | None = None
+    asset_uri: str | None = None
+    thumbnail_url: str | None = None
+    manifest_uri: str | None = None
+    body_profile_ref: str | None = None
+    mannequin_ref: str | None = None
+    design_option_ref: str | None = None
+    garment_layer_refs: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    confidence_metadata: dict[str, Any] = Field(default_factory=dict)
+    quality_metadata: dict[str, Any] = Field(default_factory=dict)
+    beta_disclaimer: str = BETA_FITTING_DISCLAIMER
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class FittingAssetManifest(BaseModel):
+    manifest_id: str
+    preview_kind: FittingPreviewKind
+    render_status: RenderStatus
+    renderer_provider: RendererProviderMode
+    manifest_uri: str | None = None
+    asset_ids: list[str] = Field(default_factory=list)
+    assets: list[FittingPreviewAsset] = Field(default_factory=list)
+    body_profile_ref: str | None = None
+    mannequin_ref: str | None = None
+    design_option_ref: str | None = None
+    garment_layer_refs: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    confidence_metadata: dict[str, Any] = Field(default_factory=dict)
+    quality_metadata: dict[str, Any] = Field(default_factory=dict)
+    beta_disclaimer: str = BETA_FITTING_DISCLAIMER
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class FittingAssetGenerationRequest(BaseModel):
+    request_id: str
+    design_session_id: str | None = None
+    fitting_result_id: str | None = None
+    preview_mode: str = "synthetic_demo"
+    preview_kind: FittingPreviewKind = FittingPreviewKind.MANNEQUIN_DESIGN_CONCEPT
+    renderer_provider: RendererProviderMode = RendererProviderMode.DEMO_SYNTHETIC
+    body_profile_snapshot: BodyProfileSnapshot
+    design_option: GeneratedDesignOption
+    garment_layer_refs: list[str] = Field(default_factory=list)
+    maker_review_required: bool = True
+    beta_disclaimer: str = BETA_FITTING_DISCLAIMER
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class FittingAssetGenerationResult(BaseModel):
+    request_id: str
+    preview_kind: FittingPreviewKind
+    render_status: RenderStatus
+    renderer_provider: RendererProviderMode
+    assets: list[FittingPreviewAsset] = Field(default_factory=list)
+    asset_manifest: FittingAssetManifest | None = None
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    confidence_metadata: dict[str, Any] = Field(default_factory=dict)
+    quality_metadata: dict[str, Any] = Field(default_factory=dict)
+    beta_disclaimer: str = BETA_FITTING_DISCLAIMER
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class DesignRefinementRequest(BaseModel):
     design_option_id: str | None = None
     refinement_prompt: str = Field(..., min_length=1)
@@ -83,6 +182,8 @@ class DesignRefinementRequest(BaseModel):
 class VirtualFittingRequest(BaseModel):
     design_option_id: str
     preview_mode: str = "synthetic_demo"
+    preview_kind: FittingPreviewKind = FittingPreviewKind.MANNEQUIN_DESIGN_CONCEPT
+    renderer_provider: RendererProviderMode = RendererProviderMode.DEMO_SYNTHETIC
     maker_review_required: bool = True
 
 
@@ -91,6 +192,8 @@ class VirtualFittingResult(BaseModel):
     design_option_id: str
     preview_status: PreviewStatus = PreviewStatus.DEMO_SYNTHETIC_PREVIEW
     preview_asset_references: list[str] = Field(default_factory=list)
+    fitting_preview_assets: list[FittingPreviewAsset] = Field(default_factory=list)
+    asset_manifest: FittingAssetManifest | None = None
     fit_summary: str
     tension_notes: list[str] = Field(default_factory=list)
     looseness_notes: list[str] = Field(default_factory=list)
@@ -154,4 +257,3 @@ class DesignGenerationRequest(BaseModel):
 class DesignApprovalRequest(BaseModel):
     design_option_id: str
     maker_production_notes: str | None = None
-

@@ -70,7 +70,10 @@ def test_fitting_preview_returns_beta_result_contract() -> None:
     assert payload["status"] == "fitting_preview_ready"
     result = payload["fitting_results"][0]
     assert result["preview_status"] == "demo_synthetic_preview"
-    assert result["preview_asset_references"][0].startswith("synthetic://virtual-fitting/")
+    assert result["preview_asset_references"][0].startswith("demo://fitting-preview/")
+    assert result["fitting_preview_assets"][0]["render_status"] == "demo_placeholder"
+    assert result["fitting_preview_assets"][0]["renderer_provider"] == "demo_synthetic"
+    assert result["asset_manifest"]["design_option_ref"] == option_id
     assert result["beta_preview_disclaimer"] == BETA_FITTING_DISCLAIMER
     assert result["confidence_metadata"]["maker_review_required"] is True
 
@@ -174,4 +177,3 @@ def _measurement_result() -> schema.MeasurementResult:
         ),
         caveats=["synthetic only"],
     )
-
