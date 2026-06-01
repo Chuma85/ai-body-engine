@@ -1,3 +1,11 @@
+"""Fitting preview asset providers.
+
+The provider boundary is intentionally narrow while renderer capability is staged:
+demo/synthetic metadata first, then beta 2D/mannequin concept assets, then higher
+fidelity snapshot renderers, and only later validated cloth simulation once
+measurement, garment, privacy, storage, and QA gates are complete.
+"""
+
 from __future__ import annotations
 
 from typing import Protocol
