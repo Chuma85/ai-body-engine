@@ -67,6 +67,67 @@ class FittingPreviewAssetType(str, Enum):
     GARMENT_OVERLAY = "garment_overlay"
 
 
+class StorageProviderKind(str, Enum):
+    NOT_STORED = "not_stored"
+    LOCAL_DEVELOPMENT = "local_development"
+    AWS_S3 = "aws_s3"
+    CLOUDFLARE_R2 = "cloudflare_r2"
+    SUPABASE_STORAGE = "supabase_storage"
+    PRIVATE_MEDIA_SERVICE = "private_media_service"
+
+
+class AssetDeletionState(str, Enum):
+    NOT_STORED = "not_stored"
+    ACTIVE = "active"
+    DELETE_REQUESTED = "delete_requested"
+    DELETED = "deleted"
+    DELETION_FAILED = "deletion_failed"
+
+
+class PrivacyGateStatus(str, Enum):
+    SYNTHETIC_DEMO_ALLOWED = "synthetic_demo_allowed"
+    PENDING_APPROVAL = "pending_approval"
+    APPROVED = "approved"
+    BLOCKED = "blocked"
+
+
+class SignedPreviewUrl(BaseModel):
+    signed_url: str
+    signed_url_expires_at: datetime
+    expires_in_seconds: int = Field(..., ge=1)
+    generated_at: datetime = Field(default_factory=utc_now)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FittingAssetStorageMetadata(BaseModel):
+    asset_id: str
+    provider: StorageProviderKind = StorageProviderKind.NOT_STORED
+    bucket: str | None = None
+    object_key: str | None = None
+    content_type: str | None = None
+    byte_size: int | None = Field(default=None, ge=0)
+    checksum: str | None = None
+    signed_url: SignedPreviewUrl | None = None
+    retention_expires_at: datetime | None = None
+    deletion_status: AssetDeletionState = AssetDeletionState.NOT_STORED
+    privacy_gate_status: PrivacyGateStatus = PrivacyGateStatus.PENDING_APPROVAL
+    uses_real_scan_media: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class StoredFittingAssetReference(BaseModel):
+    asset_id: str
+    provider: StorageProviderKind
+    object_key: str | None = None
+    content_type: str | None = None
+    preview_kind: FittingPreviewKind
+    render_status: RenderStatus
+    renderer_provider: RendererProviderMode
+    storage_metadata: FittingAssetStorageMetadata | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
 class DesignPreferenceInput(BaseModel):
     garment_type: str = Field(..., min_length=1)
     color_palette: list[str] = Field(default_factory=list)
@@ -119,6 +180,7 @@ class FittingPreviewAsset(BaseModel):
     mannequin_ref: str | None = None
     design_option_ref: str | None = None
     garment_layer_refs: list[str] = Field(default_factory=list)
+    storage_metadata: FittingAssetStorageMetadata | None = None
     warnings: list[str] = Field(default_factory=list)
     confidence_metadata: dict[str, Any] = Field(default_factory=dict)
     quality_metadata: dict[str, Any] = Field(default_factory=dict)
@@ -138,6 +200,7 @@ class FittingAssetManifest(BaseModel):
     mannequin_ref: str | None = None
     design_option_ref: str | None = None
     garment_layer_refs: list[str] = Field(default_factory=list)
+    stored_asset_references: list[StoredFittingAssetReference] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     confidence_metadata: dict[str, Any] = Field(default_factory=dict)
     quality_metadata: dict[str, Any] = Field(default_factory=dict)
