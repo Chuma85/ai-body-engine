@@ -48,6 +48,24 @@ def test_minimum_front_side_dataset_does_not_require_back_view(tmp_path) -> None
     assert any("Back view is optional" in warning for warning in result["warnings"])
 
 
+def test_require_realistic_rejects_smoke_quality_metadata(tmp_path) -> None:
+    dataset = _write_dataset(tmp_path, ["sample_000001"], include_back=True, quality_tier="smoke_only")
+
+    result = validate_dataset(dataset, require_back=True, require_realistic=True)
+
+    assert result["valid"] is False
+    assert result["non_realistic_label_rows"] == ["sample_000001"]
+
+
+def test_require_realistic_accepts_blender_training_candidate_metadata(tmp_path) -> None:
+    dataset = _write_dataset(tmp_path, ["sample_000001"], include_back=True, quality_tier="training_candidate")
+
+    result = validate_dataset(dataset, require_back=True, require_realistic=True)
+
+    assert result["valid"] is True
+    assert result["non_realistic_label_rows"] == []
+
+
 def test_headerless_labels_csv_is_supported(tmp_path) -> None:
     dataset = _write_dataset(tmp_path, ["sample_000001"], include_header=False)
 
@@ -127,6 +145,7 @@ def _write_dataset(
     include_header: bool = True,
     extra_label_samples: list[str] | None = None,
     include_back: bool = False,
+    quality_tier: str = "",
 ) -> Path:
     dataset = tmp_path / "phase_2g"
     front_dir = dataset / "images" / "front"
@@ -164,6 +183,11 @@ def _write_dataset(
                     "capture_views": "front,side,back" if include_back else "front,side",
                     "minimum_scan_views": "front,side",
                     "enhanced_scan_views": "front,side,back",
+                    "renderer_mode": "lightweight_smoke" if quality_tier == "smoke_only" else "base_mesh",
+                    "render_source": "python_silhouette_placeholder" if quality_tier == "smoke_only" else "blender_body_mesh",
+                    "is_smoke_dataset": "true" if quality_tier == "smoke_only" else "false",
+                    "is_training_candidate": "true" if quality_tier == "training_candidate" else "false",
+                    "quality_tier": quality_tier,
                     "height_cm": "170.0",
                     "weight_kg": "70.0",
                 }

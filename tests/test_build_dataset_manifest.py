@@ -46,6 +46,24 @@ def test_manifest_includes_optional_back_view_metadata_when_available(tmp_path) 
     assert all(row["enhanced_scan_views"] == "front,side,back" for row in rows)
 
 
+def test_manifest_can_require_realistic_training_candidate_metadata(tmp_path) -> None:
+    dataset = _write_dataset(tmp_path, 3, include_back=True, quality_tier="training_candidate")
+
+    result = build_dataset_manifest(dataset, require_back=True, require_realistic=True)
+
+    assert result["valid"] is True
+    assert result["row_count"] == 3
+
+
+def test_manifest_rejects_smoke_metadata_when_realistic_required(tmp_path) -> None:
+    dataset = _write_dataset(tmp_path, 3, include_back=True, quality_tier="smoke_only")
+
+    result = build_dataset_manifest(dataset, require_back=True, require_realistic=True)
+
+    assert result["valid"] is False
+    assert any("non_realistic_label_rows" in error for error in result["errors"])
+
+
 def test_manifest_generation_is_deterministic(tmp_path) -> None:
     dataset = _write_dataset(tmp_path, 30)
 
@@ -64,7 +82,7 @@ def _read_manifest(manifest_path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(manifest_file))
 
 
-def _write_dataset(tmp_path: Path, count: int, include_back: bool = False) -> Path:
+def _write_dataset(tmp_path: Path, count: int, include_back: bool = False, quality_tier: str = "") -> Path:
     dataset = tmp_path / "phase_2k"
     front_dir = dataset / "images" / "front"
     side_dir = dataset / "images" / "side"
@@ -98,6 +116,11 @@ def _write_dataset(tmp_path: Path, count: int, include_back: bool = False) -> Pa
                     "capture_views": "front,side,back" if include_back else "front,side",
                     "minimum_scan_views": "front,side",
                     "enhanced_scan_views": "front,side,back",
+                    "renderer_mode": "lightweight_smoke" if quality_tier == "smoke_only" else "base_mesh",
+                    "render_source": "python_silhouette_placeholder" if quality_tier == "smoke_only" else "blender_body_mesh",
+                    "is_smoke_dataset": "true" if quality_tier == "smoke_only" else "false",
+                    "is_training_candidate": "true" if quality_tier == "training_candidate" else "false",
+                    "quality_tier": quality_tier,
                     "height_cm": "170.0",
                     "weight_kg": "70.0",
                 }

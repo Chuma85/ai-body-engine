@@ -31,6 +31,11 @@ LABEL_COLUMNS = [
     "capture_views",
     "minimum_scan_views",
     "enhanced_scan_views",
+    "renderer_mode",
+    "render_source",
+    "is_smoke_dataset",
+    "is_training_candidate",
+    "quality_tier",
     "height_cm",
     "weight_kg",
     "chest_cm",
@@ -107,6 +112,11 @@ def _label_row(
     row["capture_views"] = ",".join(capture_views)
     row["minimum_scan_views"] = MINIMUM_SCAN_VIEWS
     row["enhanced_scan_views"] = ENHANCED_SCAN_VIEWS
+    row["renderer_mode"] = "lightweight_smoke"
+    row["render_source"] = "python_silhouette_placeholder"
+    row["is_smoke_dataset"] = True
+    row["is_training_candidate"] = False
+    row["quality_tier"] = "smoke_only"
     row["generator_version"] = GENERATOR_VERSION
     return {column: row[column] for column in LABEL_COLUMNS}
 

@@ -20,6 +20,11 @@ MANIFEST_COLUMNS = [
     "capture_views",
     "minimum_scan_views",
     "enhanced_scan_views",
+    "renderer_mode",
+    "render_source",
+    "is_smoke_dataset",
+    "is_training_candidate",
+    "quality_tier",
     "label_row_index",
     "dataset_split",
 ]
@@ -28,9 +33,14 @@ MINIMUM_SCAN_VIEWS = "front,side"
 ENHANCED_SCAN_VIEWS = "front,side,back"
 
 
-def build_dataset_manifest(dataset: str | Path, split_seed: int = DEFAULT_SPLIT_SEED, require_back: bool = False) -> dict[str, Any]:
+def build_dataset_manifest(
+    dataset: str | Path,
+    split_seed: int = DEFAULT_SPLIT_SEED,
+    require_back: bool = False,
+    require_realistic: bool = False,
+) -> dict[str, Any]:
     dataset_root = Path(dataset)
-    validation = validate_dataset(dataset_root, require_back=require_back)
+    validation = validate_dataset(dataset_root, require_back=require_back, require_realistic=require_realistic)
     if not validation["valid"]:
         return {
             "valid": False,
@@ -98,6 +108,11 @@ def _manifest_rows(dataset_root: Path, label_rows: list[dict[str, str]], split_s
                 "capture_views": capture_views,
                 "minimum_scan_views": MINIMUM_SCAN_VIEWS,
                 "enhanced_scan_views": ENHANCED_SCAN_VIEWS,
+                "renderer_mode": label_row.get("renderer_mode", ""),
+                "render_source": label_row.get("render_source", ""),
+                "is_smoke_dataset": label_row.get("is_smoke_dataset", ""),
+                "is_training_candidate": label_row.get("is_training_candidate", ""),
+                "quality_tier": label_row.get("quality_tier", ""),
                 "label_row_index": str(label_row_index),
                 "dataset_split": splits[sample_id],
             }
@@ -155,9 +170,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset", required=True, help="Synthetic dataset root, such as data/synthetic/phase_2k.")
     parser.add_argument("--split-seed", type=int, default=DEFAULT_SPLIT_SEED)
     parser.add_argument("--require-back", action="store_true")
+    parser.add_argument("--require-realistic", action="store_true")
     args = parser.parse_args(argv)
 
-    result = build_dataset_manifest(args.dataset, split_seed=args.split_seed, require_back=args.require_back)
+    result = build_dataset_manifest(
+        args.dataset,
+        split_seed=args.split_seed,
+        require_back=args.require_back,
+        require_realistic=args.require_realistic,
+    )
     print(format_manifest_report(result))
     return 0 if result["valid"] else 1
 

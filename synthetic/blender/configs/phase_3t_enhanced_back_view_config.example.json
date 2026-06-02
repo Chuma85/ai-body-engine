@@ -11,6 +11,46 @@
   "body_seed": 530042,
   "render_seed": 530314,
   "views": ["front", "side", "back"],
+  "base_mesh": {
+    "enabled": true,
+    "asset_path": "assets/body_meshes/base_human_rigged.fbx",
+    "format": "fbx",
+    "source_front_axis": "+X",
+    "source_yaw_degrees": 30.0,
+    "fallback_to_static_mesh": true,
+    "fallback_to_procedural": true,
+    "normalize_scale": true,
+    "center_on_origin": true
+  },
+  "rigging": {
+    "enabled": true,
+    "require_armature": false,
+    "detect_armature": true,
+    "detect_shape_keys": true,
+    "preferred_deformation_mode": "shape_keys_then_bones_then_safe_scale"
+  },
+  "shape_key_mapping": {
+    "height": ["height", "Height", "body_height"],
+    "weight": ["weight", "Weight", "body_weight"],
+    "chest": ["chest", "Chest", "breast", "torso_width"],
+    "waist": ["waist", "Waist", "belly", "abdomen"],
+    "hips": ["hips", "Hips", "pelvis"],
+    "shoulders": ["shoulders", "Shoulders", "shoulder_width"],
+    "muscle": ["muscle", "Muscle", "athletic"],
+    "body_fat": ["fat", "Fat", "body_fat", "heavy"]
+  },
+  "mesh_deformation": {
+    "enabled": true,
+    "mode": "rigged_or_shape_key_v1",
+    "strength": 0.30,
+    "fallback_mode": "safe_object_scale",
+    "preserve_height": true
+  },
+  "camera": {
+    "auto_frame_body": true,
+    "margin": 0.20,
+    "center_on_body": true
+  },
   "body_parameter_ranges": {
     "height_cm": [150, 205],
     "weight_kg": [45, 130],
@@ -87,5 +127,31 @@
       [0.90, 0.72, 0.58, 1.0],
       [0.36, 0.22, 0.16, 1.0]
     ]
+  },
+  "render_realism": {
+    "enabled": true,
+    "version": "phase_3t_b2_enhanced_realism_v1",
+    "notes": "Controlled realism for the Phase 3T enhanced front/side/back dataset.",
+    "background": {
+      "brightness_range": [0.82, 1.0],
+      "color_jitter": 0.04
+    },
+    "lighting": {
+      "strength_multiplier_range": [0.85, 1.20]
+    },
+    "camera": {
+      "distance_jitter_range": [-0.12, 0.12],
+      "orthographic_scale_jitter_range": [1.0, 1.05],
+      "lateral_offset_range": [-0.035, 0.035],
+      "vertical_offset_range": [-0.035, 0.035]
+    },
+    "render_resolution": {
+      "enabled": true,
+      "image_width": 640,
+      "image_height": 896
+    },
+    "materials": {
+      "skin_tone_brightness_range": [0.90, 1.08]
+    }
   }
 }

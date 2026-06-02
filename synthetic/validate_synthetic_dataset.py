@@ -19,7 +19,7 @@ ORIENTATION_WARNING = (
 )
 
 
-def validate_dataset(dataset: str | Path, require_back: bool = False) -> dict[str, Any]:
+def validate_dataset(dataset: str | Path, require_back: bool = False, require_realistic: bool = False) -> dict[str, Any]:
     dataset_root = Path(dataset)
     front_dir = dataset_root / "images" / "front"
     side_dir = dataset_root / "images" / "side"
@@ -34,6 +34,7 @@ def validate_dataset(dataset: str | Path, require_back: bool = False) -> dict[st
         "side_image_count": 0,
         "back_image_count": 0,
         "require_back": require_back,
+        "require_realistic": require_realistic,
         "errors": [],
         "warnings": [ORIENTATION_WARNING],
         "missing_paths": [],
@@ -43,6 +44,7 @@ def validate_dataset(dataset: str | Path, require_back: bool = False) -> dict[st
         "pairs_missing_label_rows": [],
         "label_rows_missing_image_pairs": [],
         "label_rows_missing_back_images": [],
+        "non_realistic_label_rows": [],
         "unreadable_images": [],
     }
 
@@ -79,6 +81,12 @@ def validate_dataset(dataset: str | Path, require_back: bool = False) -> dict[st
         for row in label_rows
         if row.get("sample_id") and (_truthy(row.get("has_back")) or bool(row.get("back_image_path")))
     }
+    if require_realistic:
+        result["non_realistic_label_rows"] = [
+            row.get("sample_id", f"row_{index}")
+            for index, row in enumerate(label_rows, start=1)
+            if not label_row_is_realistic_training_candidate(row)
+        ]
 
     result["label_row_count"] = len(label_rows)
     paired_samples = front_samples & side_samples
@@ -102,6 +110,7 @@ def validate_dataset(dataset: str | Path, require_back: bool = False) -> dict[st
         "pairs_missing_label_rows",
         "label_rows_missing_image_pairs",
         "label_rows_missing_back_images",
+        "non_realistic_label_rows",
     ):
         if result[key]:
             result["errors"].append(f"{key}: {', '.join(result[key])}")
@@ -209,6 +218,24 @@ def _truthy(value: object) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
+def label_row_is_realistic_training_candidate(row: dict[str, str]) -> bool:
+    renderer_mode = row.get("renderer_mode", "")
+    render_source = row.get("render_source", "")
+    quality_tier = row.get("quality_tier", "")
+    if renderer_mode in {"lightweight_smoke", "lightweight_placeholder", "python_silhouette_placeholder"}:
+        return False
+    if render_source in {"python_silhouette_placeholder", "lightweight_smoke"}:
+        return False
+    if quality_tier == "smoke_only":
+        return False
+    return (
+        render_source == "blender_body_mesh"
+        and quality_tier == "training_candidate"
+        and _truthy(row.get("is_training_candidate"))
+        and not _truthy(row.get("is_smoke_dataset"))
+    )
+
+
 def _add_missing_path(result: dict[str, Any], path: Path) -> None:
     result["missing_paths"].append(str(path))
     result["errors"].append(f"missing path: {path}")
@@ -239,9 +266,11 @@ def format_validation_report(result: dict[str, Any]) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate synthetic image and labels dataset outputs.")
     parser.add_argument("--dataset", required=True, help="Synthetic dataset root, such as data/synthetic/phase_2g.")
+    parser.add_argument("--require-back", action="store_true")
+    parser.add_argument("--require-realistic", action="store_true")
     args = parser.parse_args(argv)
 
-    result = validate_dataset(args.dataset)
+    result = validate_dataset(args.dataset, require_back=args.require_back, require_realistic=args.require_realistic)
     print(format_validation_report(result))
     return 0 if result["valid"] else 1
 
