@@ -145,6 +145,12 @@ def generate_controlled_back_view_dataset(dataset_root: str | Path, sample_count
                     "front_image_path": front_path.as_posix(),
                     "side_image_path": side_path.as_posix(),
                     "back_image_path": back_path.as_posix(),
+                    "has_front": "true",
+                    "has_side": "true",
+                    "has_back": "true",
+                    "capture_views": "front,side,back",
+                    "minimum_scan_views": "front,side",
+                    "enhanced_scan_views": "front,side,back",
                     "generator_version": "phase_5l_back_view_silhouette_benchmark_v1",
                 }
             )

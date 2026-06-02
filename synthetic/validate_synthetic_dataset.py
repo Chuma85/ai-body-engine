@@ -42,6 +42,7 @@ def validate_dataset(dataset: str | Path, require_back: bool = False) -> dict[st
         "unpaired_back_samples": [],
         "pairs_missing_label_rows": [],
         "label_rows_missing_image_pairs": [],
+        "label_rows_missing_back_images": [],
         "unreadable_images": [],
     }
 
@@ -65,12 +66,19 @@ def validate_dataset(dataset: str | Path, require_back: bool = False) -> dict[st
     result["front_image_count"] = len(front_images)
     result["side_image_count"] = len(side_images)
     result["back_image_count"] = len(back_images)
+    if not require_back and not back_dir.exists():
+        result["warnings"].append("Back view is optional; images/back is absent for this minimum front/side dataset.")
 
     front_samples = _sample_map(front_images, FRONT_SUFFIX, result)
     side_samples = _sample_map(side_images, SIDE_SUFFIX, result)
     back_samples = _sample_map(back_images, BACK_SUFFIX, result)
     label_rows = _read_label_rows(labels_path, result)
     label_samples = {row.get("sample_id", "") for row in label_rows if row.get("sample_id")}
+    declared_back_samples = {
+        row["sample_id"]
+        for row in label_rows
+        if row.get("sample_id") and (_truthy(row.get("has_back")) or bool(row.get("back_image_path")))
+    }
 
     result["label_row_count"] = len(label_rows)
     paired_samples = front_samples & side_samples
@@ -85,6 +93,7 @@ def validate_dataset(dataset: str | Path, require_back: bool = False) -> dict[st
         result["unpaired_back_samples"] = sorted(back_samples - (front_samples & side_samples))
     result["pairs_missing_label_rows"] = sorted(paired_samples - label_samples)
     result["label_rows_missing_image_pairs"] = sorted(label_samples - paired_samples)
+    result["label_rows_missing_back_images"] = sorted(declared_back_samples - back_samples)
 
     for key in (
         "unpaired_front_samples",
@@ -92,6 +101,7 @@ def validate_dataset(dataset: str | Path, require_back: bool = False) -> dict[st
         "unpaired_back_samples",
         "pairs_missing_label_rows",
         "label_rows_missing_image_pairs",
+        "label_rows_missing_back_images",
     ):
         if result[key]:
             result["errors"].append(f"{key}: {', '.join(result[key])}")
@@ -193,6 +203,10 @@ def _sample_id_from_image_name(filename: str, expected_suffix: str) -> str | Non
     if not filename.endswith(expected_suffix):
         return None
     return filename[: -len(expected_suffix)]
+
+
+def _truthy(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
 def _add_missing_path(result: dict[str, Any], path: Path) -> None:

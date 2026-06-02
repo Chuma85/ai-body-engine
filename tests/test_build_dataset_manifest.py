@@ -23,8 +23,27 @@ def test_manifest_is_created_with_all_samples_once(tmp_path) -> None:
     assert len(sample_ids) == len(set(sample_ids)) == 20
     assert all(Path(row["front_image_path"]).exists() for row in rows)
     assert all(Path(row["side_image_path"]).exists() for row in rows)
+    assert all(row["has_back"] == "false" for row in rows)
+    assert all(row["capture_views"] == "front,side" for row in rows)
     assert {row["dataset_split"] for row in rows} == {"train", "val", "test"}
     assert result["split_counts"] == {"train": 16, "val": 2, "test": 2}
+
+
+def test_manifest_includes_optional_back_view_metadata_when_available(tmp_path) -> None:
+    dataset = _write_dataset(tmp_path, 6, include_back=True)
+
+    result = build_dataset_manifest(dataset, require_back=True)
+    rows = _read_manifest(dataset / "manifest.csv")
+
+    assert result["valid"] is True
+    assert all(row["back_image_path"] for row in rows)
+    assert all(Path(row["back_image_path"]).exists() for row in rows)
+    assert all(row["has_front"] == "true" for row in rows)
+    assert all(row["has_side"] == "true" for row in rows)
+    assert all(row["has_back"] == "true" for row in rows)
+    assert all(row["capture_views"] == "front,side,back" for row in rows)
+    assert all(row["minimum_scan_views"] == "front,side" for row in rows)
+    assert all(row["enhanced_scan_views"] == "front,side,back" for row in rows)
 
 
 def test_manifest_generation_is_deterministic(tmp_path) -> None:
@@ -45,13 +64,16 @@ def _read_manifest(manifest_path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(manifest_file))
 
 
-def _write_dataset(tmp_path: Path, count: int) -> Path:
+def _write_dataset(tmp_path: Path, count: int, include_back: bool = False) -> Path:
     dataset = tmp_path / "phase_2k"
     front_dir = dataset / "images" / "front"
     side_dir = dataset / "images" / "side"
+    back_dir = dataset / "images" / "back"
     labels_dir = dataset / "labels"
     front_dir.mkdir(parents=True)
     side_dir.mkdir(parents=True)
+    if include_back:
+        back_dir.mkdir(parents=True)
     labels_dir.mkdir(parents=True)
 
     with (labels_dir / "labels.csv").open("w", newline="", encoding="utf-8") as labels_file:
@@ -61,12 +83,21 @@ def _write_dataset(tmp_path: Path, count: int) -> Path:
             sample_id = f"sample_{index:06d}"
             _write_png(front_dir / f"{sample_id}_front.png")
             _write_png(side_dir / f"{sample_id}_side.png")
+            if include_back:
+                _write_png(back_dir / f"{sample_id}_back.png")
             row = {column: "" for column in LABEL_COLUMNS}
             row.update(
                 {
                     "sample_id": sample_id,
                     "front_image_path": (front_dir / f"{sample_id}_front.png").as_posix(),
                     "side_image_path": (side_dir / f"{sample_id}_side.png").as_posix(),
+                    "back_image_path": (back_dir / f"{sample_id}_back.png").as_posix() if include_back else "",
+                    "has_front": "true",
+                    "has_side": "true",
+                    "has_back": "true" if include_back else "false",
+                    "capture_views": "front,side,back" if include_back else "front,side",
+                    "minimum_scan_views": "front,side",
+                    "enhanced_scan_views": "front,side,back",
                     "height_cm": "170.0",
                     "weight_kg": "70.0",
                 }

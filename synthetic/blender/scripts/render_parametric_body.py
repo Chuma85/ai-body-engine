@@ -27,6 +27,8 @@ GENERATOR_VERSION = "phase_2c_blender_procedural_body_v1"
 BODY_SHAPES = ("slim", "average", "athletic", "curvy", "broad", "plus")
 CANONICAL_FRONT_AXIS = "-Y"
 CANONICAL_SIDE_VIEW_AXIS = "-X"
+MINIMUM_SCAN_VIEWS = "front,side"
+ENHANCED_SCAN_VIEWS = "front,side,back"
 DEFAULT_RENDER_REALISM_CONTROLS = {
     "enabled": False,
     "background": {
@@ -58,6 +60,12 @@ HORIZONTAL_AXIS_ANGLES = {
     "-Y": -math.pi / 2,
 }
 OPTIONAL_METADATA_COLUMNS = [
+    "has_front",
+    "has_side",
+    "has_back",
+    "capture_views",
+    "minimum_scan_views",
+    "enhanced_scan_views",
     "skin_tone_id",
     "pose_variation_degrees",
     "camera_distance",
@@ -307,11 +315,19 @@ def label_row_for_sample(
     rng_seeds = resolved_rng_seeds(config)
     realism_controls = render_realism_controls(config)
     render_realism_config = config.get("render_realism") or {}
+    capture_views = configured_views(config)
+    has_back = back_path is not None
     return {
         "sample_id": params["sample_id"],
         "front_image_path": repo_relative_path(front_path),
         "side_image_path": repo_relative_path(side_path),
         "back_image_path": repo_relative_path(back_path) if back_path is not None else "",
+        "has_front": True,
+        "has_side": True,
+        "has_back": has_back,
+        "capture_views": ",".join(capture_views),
+        "minimum_scan_views": MINIMUM_SCAN_VIEWS,
+        "enhanced_scan_views": ENHANCED_SCAN_VIEWS,
         "height_cm": params["height_cm"],
         "weight_kg": params["weight_kg"],
         "chest_cm": params["chest_cm"],

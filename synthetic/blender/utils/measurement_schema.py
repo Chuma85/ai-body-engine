@@ -18,6 +18,13 @@ REQUIRED_MEASUREMENT_COLUMNS = [
 ]
 
 OPTIONAL_METADATA_COLUMNS = [
+    "back_image_path",
+    "has_front",
+    "has_side",
+    "has_back",
+    "capture_views",
+    "minimum_scan_views",
+    "enhanced_scan_views",
     "skin_tone_id",
     "pose_variation_degrees",
     "camera_distance",

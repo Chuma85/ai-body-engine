@@ -44,6 +44,9 @@ def test_sample_fields_and_labels_are_present(tmp_path, monkeypatch) -> None:
     assert sample["sample_id"] == "sample_000001"
     assert sample["front_image_path"].exists()
     assert sample["side_image_path"].exists()
+    assert sample["back_image_path"] is None
+    assert sample["has_back"] is False
+    assert sample["capture_views"] == ["front", "side"]
     assert sample["dataset_split"] in {"train", "val", "test"}
     assert sample["label_row_index"] == 0
     assert sample["labels"]["body_shape"] == "average"
@@ -61,6 +64,21 @@ def test_load_images_is_optional(tmp_path, monkeypatch) -> None:
     assert "front_image_bytes" not in path_only_sample
     assert image_sample["front_image_bytes"].startswith(b"\x89PNG")
     assert image_sample["side_image_bytes"].startswith(b"\x89PNG")
+
+
+def test_optional_back_view_is_loaded_when_manifest_includes_it(tmp_path, monkeypatch) -> None:
+    dataset_root = _write_dataset(tmp_path, 5, include_back=True)
+    monkeypatch.chdir(tmp_path)
+
+    sample = SyntheticBodyDataset(dataset_root, load_images=True)[0]
+
+    assert sample["back_image_path"] is not None
+    assert sample["back_image_path"].exists()
+    assert sample["has_back"] is True
+    assert sample["capture_views"] == ["front", "side", "back"]
+    assert sample["minimum_scan_views"] == ["front", "side"]
+    assert sample["enhanced_scan_views"] == ["front", "side", "back"]
+    assert sample["back_image_bytes"].startswith(b"\x89PNG")
 
 
 def test_invalid_split_raises_clear_error(tmp_path) -> None:
@@ -100,13 +118,16 @@ def test_missing_image_path_raises_clear_error(tmp_path, monkeypatch) -> None:
         dataset[0]
 
 
-def _write_dataset(tmp_path: Path, count: int) -> Path:
+def _write_dataset(tmp_path: Path, count: int, include_back: bool = False) -> Path:
     dataset_root = tmp_path / "data" / "synthetic" / "phase_test"
     front_dir = dataset_root / "images" / "front"
     side_dir = dataset_root / "images" / "side"
+    back_dir = dataset_root / "images" / "back"
     labels_dir = dataset_root / "labels"
     front_dir.mkdir(parents=True)
     side_dir.mkdir(parents=True)
+    if include_back:
+        back_dir.mkdir(parents=True)
     labels_dir.mkdir(parents=True)
 
     with (labels_dir / "labels.csv").open("w", newline="", encoding="utf-8") as labels_file:
@@ -116,12 +137,21 @@ def _write_dataset(tmp_path: Path, count: int) -> Path:
             sample_id = f"sample_{index:06d}"
             _write_png(front_dir / f"{sample_id}_front.png")
             _write_png(side_dir / f"{sample_id}_side.png")
+            if include_back:
+                _write_png(back_dir / f"{sample_id}_back.png")
             row = {column: "" for column in LABEL_COLUMNS}
             row.update(
                 {
                     "sample_id": sample_id,
                     "front_image_path": (front_dir / f"{sample_id}_front.png").as_posix(),
                     "side_image_path": (side_dir / f"{sample_id}_side.png").as_posix(),
+                    "back_image_path": (back_dir / f"{sample_id}_back.png").as_posix() if include_back else "",
+                    "has_front": "true",
+                    "has_side": "true",
+                    "has_back": "true" if include_back else "false",
+                    "capture_views": "front,side,back" if include_back else "front,side",
+                    "minimum_scan_views": "front,side",
+                    "enhanced_scan_views": "front,side,back",
                     "height_cm": str(170 + index),
                     "weight_kg": str(70 + index),
                     "chest_cm": "95.0",

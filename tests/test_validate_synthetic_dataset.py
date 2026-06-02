@@ -16,6 +16,38 @@ def test_valid_dataset_passes(tmp_path) -> None:
     assert result["errors"] == []
 
 
+def test_enhanced_back_view_dataset_passes_when_back_images_align(tmp_path) -> None:
+    dataset = _write_dataset(tmp_path, ["sample_000001", "sample_000002"], include_back=True)
+
+    result = validate_dataset(dataset, require_back=True)
+
+    assert result["valid"] is True
+    assert result["sample_count"] == 2
+    assert result["back_image_count"] == 2
+    assert result["label_rows_missing_back_images"] == []
+
+
+def test_missing_back_image_fails_when_label_declares_back_view(tmp_path) -> None:
+    dataset = _write_dataset(tmp_path, ["sample_000001"], include_back=True)
+    (dataset / "images" / "back" / "sample_000001_back.png").unlink()
+
+    result = validate_dataset(dataset)
+
+    assert result["valid"] is False
+    assert result["label_rows_missing_back_images"] == ["sample_000001"]
+    assert any("label_rows_missing_back_images" in error for error in result["errors"])
+
+
+def test_minimum_front_side_dataset_does_not_require_back_view(tmp_path) -> None:
+    dataset = _write_dataset(tmp_path, ["sample_000001"], include_back=False)
+
+    result = validate_dataset(dataset)
+
+    assert result["valid"] is True
+    assert result["back_image_count"] == 0
+    assert any("Back view is optional" in warning for warning in result["warnings"])
+
+
 def test_headerless_labels_csv_is_supported(tmp_path) -> None:
     dataset = _write_dataset(tmp_path, ["sample_000001"], include_header=False)
 
@@ -94,18 +126,24 @@ def _write_dataset(
     *,
     include_header: bool = True,
     extra_label_samples: list[str] | None = None,
+    include_back: bool = False,
 ) -> Path:
     dataset = tmp_path / "phase_2g"
     front_dir = dataset / "images" / "front"
     side_dir = dataset / "images" / "side"
+    back_dir = dataset / "images" / "back"
     labels_dir = dataset / "labels"
     front_dir.mkdir(parents=True)
     side_dir.mkdir(parents=True)
+    if include_back:
+        back_dir.mkdir(parents=True)
     labels_dir.mkdir(parents=True)
 
     for sample_id in sample_ids:
         _write_png(front_dir / f"{sample_id}_front.png")
         _write_png(side_dir / f"{sample_id}_side.png")
+        if include_back:
+            _write_png(back_dir / f"{sample_id}_back.png")
 
     label_samples = [*sample_ids, *(extra_label_samples or [])]
     with (labels_dir / "labels.csv").open("w", newline="", encoding="utf-8") as csv_file:
@@ -119,6 +157,13 @@ def _write_dataset(
                     "sample_id": sample_id,
                     "front_image_path": str(front_dir / f"{sample_id}_front.png"),
                     "side_image_path": str(side_dir / f"{sample_id}_side.png"),
+                    "back_image_path": str(back_dir / f"{sample_id}_back.png") if include_back else "",
+                    "has_front": "true",
+                    "has_side": "true",
+                    "has_back": "true" if include_back else "false",
+                    "capture_views": "front,side,back" if include_back else "front,side",
+                    "minimum_scan_views": "front,side",
+                    "enhanced_scan_views": "front,side,back",
                     "height_cm": "170.0",
                     "weight_kg": "70.0",
                 }

@@ -72,6 +72,12 @@ class SyntheticBodyDataset:
             "front_image_path": front_image_path,
             "side_image_path": side_image_path,
             "back_image_path": back_image_path,
+            "has_front": _truthy(manifest_row.get("has_front", "true")),
+            "has_side": _truthy(manifest_row.get("has_side", "true")),
+            "has_back": _truthy(manifest_row.get("has_back", "false")),
+            "capture_views": _split_views(manifest_row.get("capture_views", "front,side")),
+            "minimum_scan_views": _split_views(manifest_row.get("minimum_scan_views", "front,side")),
+            "enhanced_scan_views": _split_views(manifest_row.get("enhanced_scan_views", "front,side,back")),
             "dataset_split": manifest_row["dataset_split"],
             "label_row_index": int(manifest_row["label_row_index"]),
             "labels": label_row,
@@ -152,6 +158,14 @@ def _parse_measurements(label_row: dict[str, str]) -> dict[str, float]:
         if value not in ("", None):
             measurements[column] = float(value)
     return measurements
+
+
+def _truthy(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _split_views(value: str) -> list[str]:
+    return [view.strip() for view in value.split(",") if view.strip()]
 
 
 def format_sample_summary(sample: dict[str, Any]) -> str:

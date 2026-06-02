@@ -1,0 +1,40 @@
+{
+  "generator_version": "phase_3t_b_optional_back_view_smoke_v1",
+  "output_dir": "data/synthetic/phase_3t_back_view_smoke",
+  "sample_count": 6,
+  "image_width": 640,
+  "image_height": 896,
+  "camera_distance": 4.5,
+  "camera_focal_length": 65,
+  "render_engine": "BLENDER_EEVEE_NEXT",
+  "random_seed": 42,
+  "body_seed": 530042,
+  "render_seed": 530314,
+  "views": ["front", "side", "back"],
+  "body_parameter_ranges": {
+    "height_cm": [150, 205],
+    "weight_kg": [45, 130],
+    "chest_cm": [75, 130],
+    "waist_cm": [55, 125],
+    "hip_cm": [75, 135],
+    "shoulder_cm": [35, 60],
+    "inseam_cm": [65, 95],
+    "sleeve_cm": [50, 75],
+    "neck_cm": [30, 50],
+    "thigh_cm": [40, 80],
+    "calf_cm": [28, 55]
+  },
+  "variation_controls": {
+    "enabled": true,
+    "profile_range_overrides_enabled": false,
+    "notes": "Phase 3T-B smoke config for optional enhanced front/side/back generation."
+  },
+  "lighting": {
+    "type": "three_point",
+    "randomize_strength": true
+  },
+  "background": {
+    "type": "plain",
+    "color": [1, 1, 1]
+  }
+}

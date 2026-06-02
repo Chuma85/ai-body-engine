@@ -30,6 +30,7 @@ PHASE_3G_CONFIG_PATH = "synthetic/blender/configs/phase_3g_render_realism_config
 PHASE_3K_CONFIG_PATH = "synthetic/blender/configs/phase_3k_rng_isolation_config.example.json"
 PHASE_3L_CLEAN_CONFIG_PATH = "synthetic/blender/configs/phase_3l_same_body_clean_config.example.json"
 PHASE_3L_REALISM_CONFIG_PATH = "synthetic/blender/configs/phase_3l_same_body_realism_config.example.json"
+PHASE_3T_B_CONFIG_PATH = "synthetic/blender/configs/phase_3t_optional_back_view_config.example.json"
 PHASE_3N_CONFIG_PATHS = [
     "synthetic/blender/configs/phase_3n_clean_baseline_config.example.json",
     "synthetic/blender/configs/phase_3n_background_only_config.example.json",
@@ -313,7 +314,7 @@ def test_region_scale_factors_respond_to_measurements() -> None:
 
 
 def test_measurement_schema_matches_dataset_label_columns() -> None:
-    assert REQUIRED_MEASUREMENT_COLUMNS == LABEL_COLUMNS
+    assert set(REQUIRED_MEASUREMENT_COLUMNS).issubset(set(LABEL_COLUMNS))
 
 
 def test_phase_2g_rigged_mesh_config_loads_and_validates() -> None:
@@ -609,6 +610,10 @@ def test_phase_3g_label_row_format_remains_compatible() -> None:
 
     assert set(row) == set(module.LABEL_COLUMNS)
     assert validate_measurement_row(row) is True
+    assert row["has_back"] is False
+    assert row["capture_views"] == "front,side"
+    assert row["minimum_scan_views"] == "front,side"
+    assert row["enhanced_scan_views"] == "front,side,back"
     assert row["render_width"] == 768
     assert row["render_height"] == 1024
 
@@ -628,6 +633,39 @@ def test_phase_3k_label_row_includes_rng_metadata_and_remains_compatible() -> No
     assert row["render_seed"] == 314159
     assert row["render_realism_enabled"] is True
     assert row["render_realism_version"] == "phase_3k_render_realism_rng_v1"
+
+
+def test_phase_3t_b_optional_back_view_config_loads_and_validates() -> None:
+    config = load_render_config(PHASE_3T_B_CONFIG_PATH)
+
+    assert config.generator_version == "phase_3t_b_optional_back_view_smoke_v1"
+    assert config.output_dir == "data/synthetic/phase_3t_back_view_smoke"
+    assert config.views == ["front", "side", "back"]
+
+
+def test_phase_3t_b_label_row_marks_enhanced_capture_views() -> None:
+    module = importlib.import_module("synthetic.blender.scripts.render_parametric_body")
+    config = module.load_config(PHASE_3T_B_CONFIG_PATH)
+    root = module.repo_root() / "data" / "synthetic" / "phase_3t_back_view_smoke"
+    front_path = root / "images" / "front" / "sample_000001_front.png"
+    side_path = root / "images" / "side" / "sample_000001_side.png"
+    back_path = root / "images" / "back" / "sample_000001_back.png"
+    params = module.generate_body_parameters(1, random.Random(config["body_seed"]), config)
+
+    row = module.label_row_for_sample(
+        params,
+        config,
+        front_path,
+        side_path,
+        module.resume_render_metadata(config),
+        back_path=back_path,
+    )
+
+    assert row["back_image_path"].endswith("images/back/sample_000001_back.png")
+    assert row["has_back"] is True
+    assert row["capture_views"] == "front,side,back"
+    assert row["minimum_scan_views"] == "front,side"
+    assert row["enhanced_scan_views"] == "front,side,back"
 
 
 def test_deformation_math_clamps_and_normalizes_values() -> None:

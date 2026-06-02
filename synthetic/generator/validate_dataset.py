@@ -27,6 +27,7 @@ def validate_dataset(labels_csv_path: str) -> dict[str, Any]:
         "row_count": 0,
         "missing_files": [],
         "missing_columns": [],
+        "missing_back_files": [],
     }
 
     if not labels_path.exists():
@@ -53,6 +54,12 @@ def validate_dataset(labels_csv_path: str) -> dict[str, Any]:
             if not image_path.exists():
                 missing_files.append(str(image_path))
 
+        if _truthy(row.get("has_back")) or row.get("back_image_path"):
+            back_image_path = Path(row.get("back_image_path", ""))
+            if not row.get("back_image_path") or not back_image_path.exists():
+                result["missing_back_files"].append(str(back_image_path))
+                missing_files.append(str(back_image_path))
+
         for measurement_column in MEASUREMENT_COLUMNS:
             if row[measurement_column] in ("", None):
                 has_missing_measurements = True
@@ -64,6 +71,10 @@ def validate_dataset(labels_csv_path: str) -> dict[str, Any]:
         result["missing_measurements"] = True
 
     return result
+
+
+def _truthy(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
 def main() -> None:

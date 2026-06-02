@@ -14,10 +14,18 @@ MANIFEST_COLUMNS = [
     "front_image_path",
     "side_image_path",
     "back_image_path",
+    "has_front",
+    "has_side",
+    "has_back",
+    "capture_views",
+    "minimum_scan_views",
+    "enhanced_scan_views",
     "label_row_index",
     "dataset_split",
 ]
 DEFAULT_SPLIT_SEED = 42
+MINIMUM_SCAN_VIEWS = "front,side"
+ENHANCED_SCAN_VIEWS = "front,side,back"
 
 
 def build_dataset_manifest(dataset: str | Path, split_seed: int = DEFAULT_SPLIT_SEED, require_back: bool = False) -> dict[str, Any]:
@@ -74,15 +82,22 @@ def _manifest_rows(dataset_root: Path, label_rows: list[dict[str, str]], split_s
 
     manifest_rows = []
     for sample_id in sample_ids:
-        label_row_index, _label_row = rows_by_sample[sample_id]
+        label_row_index, label_row = rows_by_sample[sample_id]
+        back_path = dataset_root / "images" / "back" / f"{sample_id}_back.png"
+        has_back = require_back or _truthy(label_row.get("has_back")) or back_path.exists()
+        capture_views = ENHANCED_SCAN_VIEWS if has_back else MINIMUM_SCAN_VIEWS
         manifest_rows.append(
             {
                 "sample_id": sample_id,
                 "front_image_path": (dataset_root / "images" / "front" / f"{sample_id}_front.png").as_posix(),
                 "side_image_path": (dataset_root / "images" / "side" / f"{sample_id}_side.png").as_posix(),
-                "back_image_path": (
-                    dataset_root / "images" / "back" / f"{sample_id}_back.png"
-                ).as_posix() if require_back or (dataset_root / "images" / "back" / f"{sample_id}_back.png").exists() else "",
+                "back_image_path": back_path.as_posix() if has_back else "",
+                "has_front": "true",
+                "has_side": "true",
+                "has_back": "true" if has_back else "false",
+                "capture_views": capture_views,
+                "minimum_scan_views": MINIMUM_SCAN_VIEWS,
+                "enhanced_scan_views": ENHANCED_SCAN_VIEWS,
                 "label_row_index": str(label_row_index),
                 "dataset_split": splits[sample_id],
             }
@@ -113,6 +128,10 @@ def _assign_splits(sample_ids: list[str]) -> dict[str, str]:
         raise ValueError("Invalid split counts")
 
     return split_by_sample
+
+
+def _truthy(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
 def format_manifest_report(result: dict[str, Any]) -> str:
