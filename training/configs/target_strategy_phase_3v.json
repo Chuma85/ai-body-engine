@@ -81,7 +81,7 @@
       {
         "run_name": "phase_3l_clean_ridge",
         "path": "artifacts/experiments/phase_3l_clean_ridge/metrics.json",
-        "dataset": "data/synthetic/phase_3l_clean",
+        "dataset": "data/synthetic/_archived_old_mannequin/phase_3l_clean",
         "feature_group": "all_features",
         "model_type": "ridge",
         "source": "phase_3l_metrics"

@@ -37,6 +37,28 @@ agents/       Future agent workflow placeholders
 tests/        pytest test suite
 ```
 
+## Active Synthetic Dataset
+
+The active synthetic training dataset is:
+
+```text
+data/synthetic/phase_3t
+```
+
+Older mannequin, procedural-body, render-realism, and early body-asset experiment datasets are quarantined under:
+
+```text
+data/synthetic/_archived_old_mannequin
+```
+
+Do not train or benchmark by globbing every `data/synthetic/phase_*` folder. Training and audit scripts should use an explicit dataset path, or default only to `data/synthetic/phase_3t`.
+
+Inspect the current dataset state with:
+
+```bash
+python scripts/list_active_datasets.py
+```
+
 ## Local Setup
 
 Create and activate a virtual environment:

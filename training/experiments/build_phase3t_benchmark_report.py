@@ -21,12 +21,13 @@ PER_TARGET_RESULTS_CSV = "per_target_results.csv"
 CNN_HISTORY_JSON = "cnn_training_history.json"
 CNN_HISTORY_CSV = "cnn_training_history.csv"
 PROMOTION_READINESS_MD = "promotion_readiness.md"
+ARCHIVED_OLD_MANNEQUIN_ROOT = "data/synthetic/_archived_old_mannequin"
 
 REFERENCE_BASELINES = [
     {
         "run_name": "phase_3l_clean_ridge",
         "source": "phase_3s_reference",
-        "dataset": "data/synthetic/phase_3l_clean",
+        "dataset": f"{ARCHIVED_OLD_MANNEQUIN_ROOT}/phase_3l_clean",
         "feature_group": "all_features",
         "model_type": "ridge",
         "test_mae": 6.5780,
@@ -35,7 +36,7 @@ REFERENCE_BASELINES = [
     {
         "run_name": "phase_3r_background_raw_scale_elasticnet",
         "source": "phase_3s_reference",
-        "dataset": "data/synthetic/phase_3n_background_only",
+        "dataset": f"{ARCHIVED_OLD_MANNEQUIN_ROOT}/phase_3n_background_only",
         "feature_group": "raw_scale_camera",
         "model_type": "elasticnet",
         "test_mae": 7.0834,
@@ -44,7 +45,7 @@ REFERENCE_BASELINES = [
     {
         "run_name": "phase_3r_camera_jitter_hybrid_without_area_random_forest",
         "source": "phase_3s_reference",
-        "dataset": "data/synthetic/phase_3n_camera_jitter_only",
+        "dataset": f"{ARCHIVED_OLD_MANNEQUIN_ROOT}/phase_3n_camera_jitter_only",
         "feature_group": "combined_hybrid_without_area_ratios",
         "model_type": "random_forest",
         "test_mae": 7.1666,
@@ -53,7 +54,7 @@ REFERENCE_BASELINES = [
     {
         "run_name": "phase_3r_combined_realism_raw_scale_gradient_boosting",
         "source": "phase_3s_reference",
-        "dataset": "data/synthetic/phase_3n_combined_realism",
+        "dataset": f"{ARCHIVED_OLD_MANNEQUIN_ROOT}/phase_3n_combined_realism",
         "feature_group": "raw_scale_camera",
         "model_type": "gradient_boosting",
         "test_mae": 7.2811,

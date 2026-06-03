@@ -151,6 +151,8 @@ data/synthetic/phase_3n_lighting_only/
 data/synthetic/phase_3n_camera_jitter_only/
 data/synthetic/phase_3n_skin_tone_only/
 data/synthetic/phase_3n_combined_realism/
+data/synthetic/_archived_old_mannequin/*
+!data/synthetic/_archived_old_mannequin/README.md
 data/synthetic/phase_3t/
 data/synthetic/phase_3t_enhanced/
 *.blend

@@ -8,6 +8,8 @@ from synthetic.blender.scripts.render_parametric_body import LABEL_COLUMNS
 from synthetic.build_dataset_manifest import build_dataset_manifest
 from synthetic.validate_synthetic_dataset import validate_dataset
 from training.experiments.build_phase3t_benchmark_report import (
+    ARCHIVED_OLD_MANNEQUIN_ROOT,
+    REFERENCE_BASELINES,
     TARGET_COLUMNS,
     build_phase3t_benchmark_report,
     promotion_gate,
@@ -29,6 +31,11 @@ def test_promotion_gate_logic_is_deterministic() -> None:
     assert promotion_gate(6.1)["gate"] == "research_only"
     assert promotion_gate(4.2)["gate"] == "assisted_sizing_manual_confirmation"
     assert promotion_gate(2.1)["gate"] == "stronger_production_candidate"
+
+
+def test_reference_baselines_point_to_archived_old_mannequin_datasets() -> None:
+    assert REFERENCE_BASELINES
+    assert all(row["dataset"].startswith(ARCHIVED_OLD_MANNEQUIN_ROOT) for row in REFERENCE_BASELINES)
 
 
 def test_validation_catches_missing_image_pair(tmp_path: Path) -> None:
