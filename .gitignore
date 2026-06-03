@@ -154,6 +154,7 @@ data/synthetic/phase_3n_combined_realism/
 data/synthetic/_archived_old_mannequin/*
 !data/synthetic/_archived_old_mannequin/README.md
 data/synthetic/phase_3t/
+data/synthetic/phase_3h_blend_250/
 data/synthetic/phase_3t_enhanced/
 *.blend
 *.blend1
