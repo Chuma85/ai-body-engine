@@ -26,6 +26,18 @@ assets/body_meshes/base_human.glb
 
 If that file is not present and fallback is enabled, the renderer will use the procedural mannequin path instead.
 
+## Phase 3H-B Blend Scene Guidance
+
+The Phase 3H-B blend-file dataset workflow defaults to:
+
+```text
+assets/body_meshes/base_body_scene.blend
+```
+
+The scene must include `FrontCam`, `SideCam`, and `BackCam` cameras. The workflow can render front, side, and back PNGs directly from the `.blend` file and will write metadata describing the source blend file, camera set, seed, pose, and variation source.
+
+If the scene has no shape keys, the workflow renders the static blend mesh and records `variation_source=static_blend_mesh`. True body shape variation requires shape keys, parametric mesh controls, or multiple body meshes.
+
 ## Phase 2G Rigged Mesh Guidance
 
 For Phase 2G, the preferred local asset is:
