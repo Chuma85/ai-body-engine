@@ -16,6 +16,7 @@ from synthetic.blender.blend_dataset import (
     DEFAULT_BLENDER_SCRIPT,
     DEFAULT_IMAGE_HEIGHT,
     DEFAULT_IMAGE_WIDTH,
+    DEFAULT_LABEL_NOISE_CM,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_POSE_VARIATION_DEGREES,
     DEFAULT_SAMPLE_COUNT,
@@ -50,6 +51,7 @@ def generate_blend_dataset(
     script_path: str = DEFAULT_BLENDER_SCRIPT,
     shape_key_range: float = DEFAULT_SHAPE_KEY_RANGE,
     pose_variation_degrees: float = DEFAULT_POSE_VARIATION_DEGREES,
+    label_noise_cm: float = DEFAULT_LABEL_NOISE_CM,
     overwrite: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -80,6 +82,7 @@ def generate_blend_dataset(
         image_height=image_height,
         shape_key_range=shape_key_range,
         pose_variation_degrees=pose_variation_degrees,
+        label_noise_cm=label_noise_cm,
     )
     if dry_run:
         return {
@@ -136,6 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--script-path", default=DEFAULT_BLENDER_SCRIPT)
     parser.add_argument("--shape-key-range", type=float, default=DEFAULT_SHAPE_KEY_RANGE)
     parser.add_argument("--pose-variation-degrees", type=float, default=DEFAULT_POSE_VARIATION_DEGREES)
+    parser.add_argument("--label-noise-cm", type=float, default=DEFAULT_LABEL_NOISE_CM)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -155,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         script_path=args.script_path,
         shape_key_range=args.shape_key_range,
         pose_variation_degrees=args.pose_variation_degrees,
+        label_noise_cm=args.label_noise_cm,
         overwrite=args.overwrite,
         dry_run=args.dry_run,
     )

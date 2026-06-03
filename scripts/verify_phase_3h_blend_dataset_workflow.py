@@ -41,7 +41,7 @@ REQUIRED_SNIPPETS = {
         "FrontCam",
         "shape_keys_safe_range",
         "static_blend_mesh",
-        "SYNTHETIC_LABEL_SOURCE",
+        "SHAPE_KEY_COUPLED_LABEL_SOURCE",
     ],
     TEST_PATH: [
         "test_blend_dataset_command_includes_source_blend_file_and_cameras",

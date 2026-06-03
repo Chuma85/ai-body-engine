@@ -23,6 +23,7 @@ from synthetic.blender.blend_dataset import (
     DEFAULT_CAMERA_NAMES,
     DEFAULT_IMAGE_HEIGHT,
     DEFAULT_IMAGE_WIDTH,
+    DEFAULT_LABEL_NOISE_CM,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_POSE_VARIATION_DEGREES,
     DEFAULT_SAMPLE_COUNT,
@@ -31,13 +32,16 @@ from synthetic.blender.blend_dataset import (
     DEFAULT_SOURCE_MODE,
     GENERATOR_VERSION,
     STATIC_BLEND_WARNING,
-    SYNTHETIC_LABEL_SOURCE,
-    blend_generation_config,
+    SHAPE_KEY_COUPLED_LABEL_SOURCE,
     camera_set_name,
+    generate_shape_key_coupled_measurements,
+    LABEL_GENERATION_MODE,
+    LABEL_FORMULA_VERSION,
     repo_relative_path,
     resolve_repo_path,
+    shape_key_label_metadata,
+    shape_key_traceability_json,
 )
-from synthetic.blender.scripts.render_parametric_body import generate_body_parameters
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -53,6 +57,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--image-height", type=int, default=DEFAULT_IMAGE_HEIGHT)
     parser.add_argument("--shape-key-range", type=float, default=DEFAULT_SHAPE_KEY_RANGE)
     parser.add_argument("--pose-variation-degrees", type=float, default=DEFAULT_POSE_VARIATION_DEGREES)
+    parser.add_argument("--label-noise-cm", type=float, default=DEFAULT_LABEL_NOISE_CM)
     parser.add_argument("--front-camera", default=DEFAULT_CAMERA_NAMES["front"])
     parser.add_argument("--side-camera", default=DEFAULT_CAMERA_NAMES["side"])
     parser.add_argument("--back-camera", default=DEFAULT_CAMERA_NAMES["back"])
@@ -92,13 +97,6 @@ def main(argv: list[str] | None = None) -> int:
     images_dir.mkdir(parents=True, exist_ok=True)
     labels_path = output_root / "labels.csv"
     metadata_path = output_root / "metadata.json"
-    config = blend_generation_config(
-        output_dir=output_root,
-        samples=args.samples,
-        seed=args.seed,
-        image_width=args.image_width,
-        image_height=args.image_height,
-    )
     rng = random.Random(args.seed)
     initial_armature_rotations = {armature.name: tuple(armature.rotation_euler) for armature in armatures}
     labels: list[dict[str, object]] = []
@@ -107,14 +105,21 @@ def main(argv: list[str] | None = None) -> int:
     setup_render_settings(bpy, args.image_width, args.image_height)
 
     for index in range(1, args.samples + 1):
-        params = generate_body_parameters(index, rng, config)
+        sample_id = f"sample_{index:06d}"
         reset_shape_keys(shape_key_blocks)
         reset_armature_rotations(armatures, initial_armature_rotations)
-        sample_rng = random.Random(f"{args.seed}:{params['sample_id']}")
+        sample_rng = random.Random(f"{args.seed}:{sample_id}")
         shape_key_values = apply_shape_key_variation(shape_key_blocks, sample_rng, args.shape_key_range)
+        label_payload = generate_shape_key_coupled_measurements(
+            sample_id=sample_id,
+            seed=args.seed,
+            shape_key_values=shape_key_values,
+            shape_key_range=args.shape_key_range,
+            label_noise_cm=args.label_noise_cm,
+        )
         pose_degrees = apply_pose_variation(armatures, sample_rng, args.pose_variation_degrees)
         image_paths = {
-            view: images_dir / f"{params['sample_id']}_{view}.png"
+            view: images_dir / f"{sample_id}_{view}.png"
             for view in CAMERA_VIEWS
         }
 
@@ -128,7 +133,9 @@ def main(argv: list[str] | None = None) -> int:
         }
         labels.append(
             blend_label_row(
-                params=params,
+                sample_id=sample_id,
+                label_payload=label_payload,
+                shape_key_values=shape_key_values,
                 relative_images=relative_images,
                 blend_path=blend_path,
                 variation_source=variation_source,
@@ -138,12 +145,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         samples_metadata.append(
             {
-                "sample_id": params["sample_id"],
+                "sample_id": sample_id,
                 "pose": {"yaw_degrees": pose_degrees},
                 "variation": {
                     "variation_source": variation_source,
                     "shape_keys": shape_key_values,
+                    "body_factors": label_payload["factors"],
+                    "body_shape_profile_id": label_payload["body_shape_profile_id"],
                 },
+                "labels": label_payload["measurements"],
+                "label_generation_mode": LABEL_GENERATION_MODE,
+                "label_formula_version": LABEL_FORMULA_VERSION,
                 "cameras": camera_names,
                 "seed": args.seed,
             }
@@ -162,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         "real_world_validated": False,
         "variation_source": variation_source,
         "shape_key_count": len(shape_key_blocks),
+        **shape_key_label_metadata(args.seed),
         "armature_count": len(armatures),
         "mesh_count": len(meshes),
         "warnings": warnings,
@@ -273,31 +286,46 @@ def render_view(bpy, output_path: Path, width: int, height: int) -> None:
 
 def blend_label_row(
     *,
-    params: dict,
+    sample_id: str,
+    label_payload: dict[str, object],
+    shape_key_values: dict[str, float],
     relative_images: dict[str, str],
     blend_path: Path,
     variation_source: str,
     camera_names: dict[str, str],
     seed: int,
 ) -> dict[str, object]:
+    measurements = label_payload["measurements"]
+    factors = label_payload["factors"]
     return {
-        "sample_id": params["sample_id"],
+        "sample_id": sample_id,
         "front_image": relative_images["front"],
         "side_image": relative_images["side"],
         "back_image": relative_images["back"],
-        "height_cm": params["height_cm"],
-        "chest_cm": params["chest_cm"],
-        "waist_cm": params["waist_cm"],
-        "hip_cm": params["hip_cm"],
-        "shoulder_cm": params["shoulder_cm"],
-        "inseam_cm": params["inseam_cm"],
+        "height_cm": measurements["height_cm"],
+        "chest_cm": measurements["chest_cm"],
+        "waist_cm": measurements["waist_cm"],
+        "hip_cm": measurements["hip_cm"],
+        "shoulder_cm": measurements["shoulder_cm"],
+        "inseam_cm": measurements["inseam_cm"],
         "source_blend_file": repo_relative_path(blend_path),
         "variation_source": variation_source,
         "camera_set": camera_set_name(camera_names),
         "seed": seed,
-        "label_source": SYNTHETIC_LABEL_SOURCE,
+        "label_source": SHAPE_KEY_COUPLED_LABEL_SOURCE,
         "synthetic_labels": "true",
         "real_world_validated": "false",
+        "label_generation_mode": LABEL_GENERATION_MODE,
+        "height_factor": factors["height_factor"],
+        "chest_factor": factors["chest_factor"],
+        "waist_factor": factors["waist_factor"],
+        "hip_factor": factors["hip_factor"],
+        "shoulder_factor": factors["shoulder_factor"],
+        "inseam_factor": factors["inseam_factor"],
+        "torso_width_factor": factors["torso_width_factor"],
+        "leg_length_factor": factors["leg_length_factor"],
+        "shape_key_values_json": shape_key_traceability_json(shape_key_values),
+        "body_shape_profile_id": label_payload["body_shape_profile_id"],
     }
 
 

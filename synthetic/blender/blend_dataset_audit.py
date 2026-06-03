@@ -8,7 +8,7 @@ from typing import Any
 
 from PIL import Image, ImageChops, ImageDraw, ImageStat
 
-from synthetic.blender.blend_dataset import BLEND_LABEL_COLUMNS, CAMERA_VIEWS
+from synthetic.blender.blend_dataset import CAMERA_VIEWS, LEGACY_BLEND_LABEL_COLUMNS
 
 
 AUDIT_REPORT_JSON = "audit_report.json"
@@ -168,7 +168,7 @@ def read_metadata(metadata_path: Path) -> dict[str, Any]:
 
 
 def validate_label_schema(columns: list[str]) -> dict[str, Any]:
-    missing_columns = [column for column in BLEND_LABEL_COLUMNS if column not in columns]
+    missing_columns = [column for column in LEGACY_BLEND_LABEL_COLUMNS if column not in columns]
     errors = []
     warnings = []
     if missing_columns:
