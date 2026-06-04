@@ -24,8 +24,10 @@ from synthetic.blender.blend_dataset import (
     DEFAULT_IMAGE_HEIGHT,
     DEFAULT_IMAGE_WIDTH,
     DEFAULT_LABEL_NOISE_CM,
+    DEFAULT_LABEL_MEASUREMENT_SCALE,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_POSE_VARIATION_DEGREES,
+    DEFAULT_SAFE_FRAMING_SCALE,
     DEFAULT_SAMPLE_COUNT,
     DEFAULT_SEED,
     DEFAULT_SHAPE_KEY_RANGE,
@@ -40,6 +42,7 @@ from synthetic.blender.blend_dataset import (
     repo_relative_path,
     resolve_repo_path,
     shape_key_label_metadata,
+    shape_key_label_metadata_for_version,
     shape_key_traceability_json,
 )
 
@@ -53,11 +56,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--out", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--samples", type=int, default=DEFAULT_SAMPLE_COUNT)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--start-index", type=int, default=1)
     parser.add_argument("--image-width", type=int, default=DEFAULT_IMAGE_WIDTH)
     parser.add_argument("--image-height", type=int, default=DEFAULT_IMAGE_HEIGHT)
     parser.add_argument("--shape-key-range", type=float, default=DEFAULT_SHAPE_KEY_RANGE)
     parser.add_argument("--pose-variation-degrees", type=float, default=DEFAULT_POSE_VARIATION_DEGREES)
     parser.add_argument("--label-noise-cm", type=float, default=DEFAULT_LABEL_NOISE_CM)
+    parser.add_argument("--label-formula-version", default=LABEL_FORMULA_VERSION)
+    parser.add_argument("--label-measurement-scale", type=float, default=DEFAULT_LABEL_MEASUREMENT_SCALE)
+    parser.add_argument("--view-subdirs", action="store_true")
+    parser.add_argument("--safe-framing-scale", type=float, default=DEFAULT_SAFE_FRAMING_SCALE)
     parser.add_argument("--front-camera", default=DEFAULT_CAMERA_NAMES["front"])
     parser.add_argument("--side-camera", default=DEFAULT_CAMERA_NAMES["side"])
     parser.add_argument("--back-camera", default=DEFAULT_CAMERA_NAMES["back"])
@@ -68,6 +76,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.samples <= 0:
         raise ValueError("--samples must be greater than 0")
+    if args.start_index <= 0:
+        raise ValueError("--start-index must be greater than 0")
 
     try:
         import bpy
@@ -86,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         "back": args.back_camera,
     }
     cameras = find_required_cameras(bpy, camera_names)
+    apply_safe_framing_scale(cameras, args.safe_framing_scale)
     meshes = find_human_meshes(bpy)
     armatures = find_armatures(bpy)
     shape_key_blocks = collect_shape_key_blocks(meshes)
@@ -95,6 +106,9 @@ def main(argv: list[str] | None = None) -> int:
     output_root = resolve_repo_path(args.out)
     images_dir = output_root / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
+    if args.view_subdirs:
+        for view in CAMERA_VIEWS:
+            (images_dir / view).mkdir(parents=True, exist_ok=True)
     labels_path = output_root / "labels.csv"
     metadata_path = output_root / "metadata.json"
     rng = random.Random(args.seed)
@@ -104,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
 
     setup_render_settings(bpy, args.image_width, args.image_height)
 
-    for index in range(1, args.samples + 1):
+    for index in range(args.start_index, args.start_index + args.samples):
         sample_id = f"sample_{index:06d}"
         reset_shape_keys(shape_key_blocks)
         reset_armature_rotations(armatures, initial_armature_rotations)
@@ -116,10 +130,12 @@ def main(argv: list[str] | None = None) -> int:
             shape_key_values=shape_key_values,
             shape_key_range=args.shape_key_range,
             label_noise_cm=args.label_noise_cm,
+            label_formula_version=args.label_formula_version,
+            label_measurement_scale=args.label_measurement_scale,
         )
         pose_degrees = apply_pose_variation(armatures, sample_rng, args.pose_variation_degrees)
         image_paths = {
-            view: images_dir / f"{sample_id}_{view}.png"
+            view: image_path_for_view(images_dir, sample_id, view, args.view_subdirs)
             for view in CAMERA_VIEWS
         }
 
@@ -155,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
                 },
                 "labels": label_payload["measurements"],
                 "label_generation_mode": LABEL_GENERATION_MODE,
-                "label_formula_version": LABEL_FORMULA_VERSION,
+                "label_formula_version": args.label_formula_version,
                 "cameras": camera_names,
                 "seed": args.seed,
             }
@@ -174,7 +190,13 @@ def main(argv: list[str] | None = None) -> int:
         "real_world_validated": False,
         "variation_source": variation_source,
         "shape_key_count": len(shape_key_blocks),
-        **shape_key_label_metadata(args.seed),
+        "safe_framing_scale": args.safe_framing_scale,
+        **shape_key_label_metadata_for_version(
+            seed=args.seed,
+            label_formula_version=args.label_formula_version,
+            label_measurement_scale=args.label_measurement_scale,
+            shape_key_range=args.shape_key_range,
+        ),
         "armature_count": len(armatures),
         "mesh_count": len(meshes),
         "warnings": warnings,
@@ -203,6 +225,20 @@ def find_required_cameras(bpy, camera_names: dict[str, str]) -> dict[str, object
             f"or matching --front-camera/--side-camera/--back-camera names; {'; '.join(details)}"
         )
     return {view: bpy.data.objects[name] for view, name in camera_names.items()}
+
+
+def apply_safe_framing_scale(cameras: dict[str, object], safe_framing_scale: float) -> None:
+    scale = max(1.0, float(safe_framing_scale))
+    if scale <= 1.0:
+        return
+    for camera in cameras.values():
+        data = getattr(camera, "data", None)
+        if data is None:
+            continue
+        if getattr(data, "type", "") == "ORTHO":
+            data.ortho_scale = float(data.ortho_scale) * scale
+        else:
+            data.lens = max(1.0, float(data.lens) / scale)
 
 
 def find_human_meshes(bpy) -> list[object]:
@@ -247,6 +283,12 @@ def apply_shape_key_variation(shape_key_blocks: list[object], rng: random.Random
         block.value = value
         values[block.name] = value
     return values
+
+
+def image_path_for_view(images_dir: Path, sample_id: str, view: str, view_subdirs: bool) -> Path:
+    if view_subdirs:
+        return images_dir / view / f"{sample_id}_{view}.png"
+    return images_dir / f"{sample_id}_{view}.png"
 
 
 def reset_armature_rotations(armatures: list[object], initial_rotations: dict[str, tuple[float, float, float]]) -> None:

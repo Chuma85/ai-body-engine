@@ -17,12 +17,15 @@ from synthetic.blender.blend_dataset import (
     DEFAULT_IMAGE_HEIGHT,
     DEFAULT_IMAGE_WIDTH,
     DEFAULT_LABEL_NOISE_CM,
+    DEFAULT_LABEL_MEASUREMENT_SCALE,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_POSE_VARIATION_DEGREES,
     DEFAULT_SAMPLE_COUNT,
     DEFAULT_SEED,
+    DEFAULT_SAFE_FRAMING_SCALE,
     DEFAULT_SHAPE_KEY_RANGE,
     DEFAULT_SOURCE_MODE,
+    LABEL_FORMULA_VERSION,
     build_blend_blender_command,
     resolve_repo_path,
     validate_blend_file_exists,
@@ -45,6 +48,7 @@ def generate_blend_dataset(
     out: str = DEFAULT_OUTPUT_DIR,
     samples: int = DEFAULT_SAMPLE_COUNT,
     seed: int = DEFAULT_SEED,
+    start_index: int = 1,
     image_width: int = DEFAULT_IMAGE_WIDTH,
     image_height: int = DEFAULT_IMAGE_HEIGHT,
     blender_executable: str = "blender",
@@ -52,6 +56,10 @@ def generate_blend_dataset(
     shape_key_range: float = DEFAULT_SHAPE_KEY_RANGE,
     pose_variation_degrees: float = DEFAULT_POSE_VARIATION_DEGREES,
     label_noise_cm: float = DEFAULT_LABEL_NOISE_CM,
+    label_formula_version: str | None = None,
+    label_measurement_scale: float = DEFAULT_LABEL_MEASUREMENT_SCALE,
+    view_subdirs: bool = False,
+    safe_framing_scale: float = DEFAULT_SAFE_FRAMING_SCALE,
     overwrite: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -59,6 +67,8 @@ def generate_blend_dataset(
         raise ValueError(f"Unsupported source mode: {source}. Use --source blend.")
     if samples <= 0:
         raise ValueError("--samples must be greater than 0")
+    if start_index <= 0:
+        raise ValueError("--start-index must be greater than 0")
 
     blend_path = validate_blend_file_exists(blend_file)
     output_path = resolve_repo_path(out)
@@ -78,11 +88,16 @@ def generate_blend_dataset(
         output_dir=str(output_path),
         samples=samples,
         seed=seed,
+        start_index=start_index,
         image_width=image_width,
         image_height=image_height,
         shape_key_range=shape_key_range,
         pose_variation_degrees=pose_variation_degrees,
         label_noise_cm=label_noise_cm,
+        label_formula_version=label_formula_version or LABEL_FORMULA_VERSION,
+        label_measurement_scale=label_measurement_scale,
+        view_subdirs=view_subdirs,
+        safe_framing_scale=safe_framing_scale,
     )
     if dry_run:
         return {
@@ -91,6 +106,7 @@ def generate_blend_dataset(
             "output_dir": str(output_path),
             "sample_count": samples,
             "seed": seed,
+            "start_index": start_index,
             "command": command,
             "formatted_command": format_command(command),
             "dry_run": True,
@@ -133,6 +149,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--samples", type=int, default=DEFAULT_SAMPLE_COUNT)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--start-index", type=int, default=1)
     parser.add_argument("--image-width", type=int, default=DEFAULT_IMAGE_WIDTH)
     parser.add_argument("--image-height", type=int, default=DEFAULT_IMAGE_HEIGHT)
     parser.add_argument("--blender-executable", default="blender")
@@ -140,6 +157,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--shape-key-range", type=float, default=DEFAULT_SHAPE_KEY_RANGE)
     parser.add_argument("--pose-variation-degrees", type=float, default=DEFAULT_POSE_VARIATION_DEGREES)
     parser.add_argument("--label-noise-cm", type=float, default=DEFAULT_LABEL_NOISE_CM)
+    parser.add_argument("--label-formula-version", default=None)
+    parser.add_argument("--label-measurement-scale", type=float, default=DEFAULT_LABEL_MEASUREMENT_SCALE)
+    parser.add_argument("--view-subdirs", action="store_true")
+    parser.add_argument("--safe-framing-scale", type=float, default=DEFAULT_SAFE_FRAMING_SCALE)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -153,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         out=args.out,
         samples=args.samples,
         seed=args.seed,
+        start_index=args.start_index,
         image_width=args.image_width,
         image_height=args.image_height,
         blender_executable=args.blender_executable,
@@ -160,6 +182,10 @@ def main(argv: list[str] | None = None) -> int:
         shape_key_range=args.shape_key_range,
         pose_variation_degrees=args.pose_variation_degrees,
         label_noise_cm=args.label_noise_cm,
+        label_formula_version=args.label_formula_version,
+        label_measurement_scale=args.label_measurement_scale,
+        view_subdirs=args.view_subdirs,
+        safe_framing_scale=args.safe_framing_scale,
         overwrite=args.overwrite,
         dry_run=args.dry_run,
     )

@@ -137,7 +137,7 @@ def validate_blend_dataset(
         if audit_payload.get("strict") is not True:
             raise ValueError(f"Audit report was not produced in strict mode: {audit_report_path}")
 
-    image_count = sum(1 for _ in images_dir.glob("*.png"))
+    image_count = sum(1 for _ in images_dir.rglob("*.png"))
     return {
         "dataset": str(dataset_path),
         "labels_path": str(labels_path),

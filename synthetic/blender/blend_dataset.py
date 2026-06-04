@@ -35,7 +35,10 @@ SYNTHETIC_LABEL_SOURCE = "existing_synthetic_label_generator"
 SHAPE_KEY_COUPLED_LABEL_SOURCE = "shape_key_coupled_synthetic_formula"
 LABEL_GENERATION_MODE = "shape_key_coupled_synthetic"
 LABEL_FORMULA_VERSION = "shape_key_coupled_synthetic_v1"
+PHASE_3H_I_LABEL_FORMULA_VERSION = "shape_key_coupled_synthetic_v2_wide_safe_range"
 DEFAULT_LABEL_NOISE_CM = 0.15
+DEFAULT_LABEL_MEASUREMENT_SCALE = 1.0
+DEFAULT_SAFE_FRAMING_SCALE = 1.0
 LEGACY_BLEND_LABEL_COLUMNS = [
     "sample_id",
     "front_image",
@@ -194,9 +197,21 @@ def blend_generation_config(
 
 
 def shape_key_label_metadata(seed: int) -> dict[str, Any]:
+    return shape_key_label_metadata_for_version(seed=seed)
+
+
+def shape_key_label_metadata_for_version(
+    *,
+    seed: int,
+    label_formula_version: str = LABEL_FORMULA_VERSION,
+    label_measurement_scale: float = DEFAULT_LABEL_MEASUREMENT_SCALE,
+    shape_key_range: float = DEFAULT_SHAPE_KEY_RANGE,
+) -> dict[str, Any]:
     return {
         "label_generation_mode": LABEL_GENERATION_MODE,
-        "label_formula_version": LABEL_FORMULA_VERSION,
+        "label_formula_version": label_formula_version,
+        "label_measurement_scale": float(label_measurement_scale),
+        "shape_key_range": float(shape_key_range),
         "synthetic_labels": True,
         "real_world_validated": False,
         "body_factor_definitions": BODY_FACTOR_DEFINITIONS,
@@ -222,15 +237,20 @@ def build_blend_blender_command(
     output_dir: str,
     samples: int,
     seed: int,
+    start_index: int = 1,
     image_width: int = DEFAULT_IMAGE_WIDTH,
     image_height: int = DEFAULT_IMAGE_HEIGHT,
     shape_key_range: float = DEFAULT_SHAPE_KEY_RANGE,
     pose_variation_degrees: float = DEFAULT_POSE_VARIATION_DEGREES,
     label_noise_cm: float = DEFAULT_LABEL_NOISE_CM,
+    label_formula_version: str = LABEL_FORMULA_VERSION,
+    label_measurement_scale: float = DEFAULT_LABEL_MEASUREMENT_SCALE,
+    view_subdirs: bool = False,
+    safe_framing_scale: float = DEFAULT_SAFE_FRAMING_SCALE,
     camera_names: dict[str, str] | None = None,
 ) -> list[str]:
     names = camera_names or DEFAULT_CAMERA_NAMES
-    return [
+    command = [
         blender_executable,
         "--background",
         "--factory-startup",
@@ -247,6 +267,8 @@ def build_blend_blender_command(
         str(samples),
         "--seed",
         str(seed),
+        "--start-index",
+        str(start_index),
         "--image-width",
         str(image_width),
         "--image-height",
@@ -257,6 +279,12 @@ def build_blend_blender_command(
         str(pose_variation_degrees),
         "--label-noise-cm",
         str(label_noise_cm),
+        "--label-formula-version",
+        label_formula_version,
+        "--label-measurement-scale",
+        str(label_measurement_scale),
+        "--safe-framing-scale",
+        str(safe_framing_scale),
         "--front-camera",
         names["front"],
         "--side-camera",
@@ -264,6 +292,9 @@ def build_blend_blender_command(
         "--back-camera",
         names["back"],
     ]
+    if view_subdirs:
+        command.append("--view-subdirs")
+    return command
 
 
 def shape_key_factor_weights(shape_key_name: str) -> dict[str, float]:
@@ -358,37 +389,34 @@ def generate_shape_key_coupled_measurements(
     shape_key_values: dict[str, float],
     shape_key_range: float = DEFAULT_SHAPE_KEY_RANGE,
     label_noise_cm: float = DEFAULT_LABEL_NOISE_CM,
+    label_formula_version: str = LABEL_FORMULA_VERSION,
+    label_measurement_scale: float = DEFAULT_LABEL_MEASUREMENT_SCALE,
 ) -> dict[str, Any]:
     factors = derive_body_factors_from_shape_keys(shape_key_values, shape_key_range=shape_key_range)
-    noise_rng = random.Random(f"{seed}:{sample_id}:{LABEL_FORMULA_VERSION}")
+    noise_rng = random.Random(f"{seed}:{sample_id}:{label_formula_version}")
     noise = {
         target: noise_rng.uniform(-abs(float(label_noise_cm)), abs(float(label_noise_cm)))
         for target in BASE_MEASUREMENT_PROFILE
     }
+    scale = max(0.0, float(label_measurement_scale))
     labels = {
         "height_cm": BASE_MEASUREMENT_PROFILE["height_cm"]
-        + 10.0 * factors["height_factor"]
-        + 4.0 * factors["leg_length_factor"]
+        + scale * (10.0 * factors["height_factor"] + 4.0 * factors["leg_length_factor"])
         + noise["height_cm"],
         "chest_cm": BASE_MEASUREMENT_PROFILE["chest_cm"]
-        + 8.0 * factors["chest_factor"]
-        + 5.0 * factors["torso_width_factor"]
+        + scale * (8.0 * factors["chest_factor"] + 5.0 * factors["torso_width_factor"])
         + noise["chest_cm"],
         "waist_cm": BASE_MEASUREMENT_PROFILE["waist_cm"]
-        + 8.5 * factors["waist_factor"]
-        + 4.5 * factors["torso_width_factor"]
+        + scale * (8.5 * factors["waist_factor"] + 4.5 * factors["torso_width_factor"])
         + noise["waist_cm"],
         "hip_cm": BASE_MEASUREMENT_PROFILE["hip_cm"]
-        + 8.0 * factors["hip_factor"]
-        + 5.0 * factors["torso_width_factor"]
+        + scale * (8.0 * factors["hip_factor"] + 5.0 * factors["torso_width_factor"])
         + noise["hip_cm"],
         "shoulder_cm": BASE_MEASUREMENT_PROFILE["shoulder_cm"]
-        + 4.2 * factors["shoulder_factor"]
-        + 2.5 * factors["torso_width_factor"]
+        + scale * (4.2 * factors["shoulder_factor"] + 2.5 * factors["torso_width_factor"])
         + noise["shoulder_cm"],
         "inseam_cm": BASE_MEASUREMENT_PROFILE["inseam_cm"]
-        + 5.5 * factors["inseam_factor"]
-        + 3.0 * factors["height_factor"]
+        + scale * (5.5 * factors["inseam_factor"] + 3.0 * factors["height_factor"])
         + noise["inseam_cm"],
     }
     rounded_labels = {
@@ -399,7 +427,8 @@ def generate_shape_key_coupled_measurements(
         "measurements": rounded_labels,
         "factors": factors,
         "label_generation_mode": LABEL_GENERATION_MODE,
-        "label_formula_version": LABEL_FORMULA_VERSION,
+        "label_formula_version": label_formula_version,
+        "label_measurement_scale": scale,
         "body_shape_profile_id": body_shape_profile_id(factors),
     }
 
@@ -527,6 +556,7 @@ def validate_generated_blend_dataset(dataset_root: str | Path, expected_samples:
         "warnings": [],
         "missing_paths": [],
         "missing_image_paths": [],
+        "image_count": 0,
     }
 
     for path in (root, images_dir, labels_path, metadata_path):
@@ -567,6 +597,8 @@ def validate_generated_blend_dataset(dataset_root: str | Path, expected_samples:
             result["errors"].append(f"{sample_id}: synthetic_labels must be true")
         if row.get("real_world_validated") != "false":
             result["errors"].append(f"{sample_id}: real_world_validated must be false")
+
+    result["image_count"] = sum(1 for _ in images_dir.rglob("*.png"))
 
     if any(row.get("label_generation_mode") for row in rows):
         result["errors"].extend(validate_shape_key_coupled_rows(rows))
