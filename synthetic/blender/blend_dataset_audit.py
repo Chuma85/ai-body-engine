@@ -44,6 +44,7 @@ REQUIRED_METADATA_FIELDS = [
     "shape_key_count",
 ]
 MIN_VIEW_DIFFERENCE_SCORE = 0.02
+MOBILE_REALISM_MIN_VIEW_DIFFERENCE_SCORE = 0.018
 
 
 def audit_blend_dataset(
@@ -87,7 +88,7 @@ def audit_blend_dataset(
     if metadata.get("sample_count") is not None and int(metadata.get("sample_count", -1)) != len(rows):
         warnings.append(f"metadata sample_count {metadata.get('sample_count')} does not match labels row count {len(rows)}.")
 
-    image_result = audit_images(dataset_root, rows)
+    image_result = audit_images(dataset_root, rows, min_view_difference_score=view_difference_threshold(metadata))
     warnings.extend(image_result["warnings"])
     errors.extend(image_result["errors"])
     flagged_samples.extend(image_result["flagged_samples"])
@@ -197,7 +198,17 @@ def validate_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def audit_images(dataset_root: Path, rows: list[dict[str, str]]) -> dict[str, Any]:
+def view_difference_threshold(metadata: dict[str, Any]) -> float:
+    if metadata.get("mobile_realism") is True or metadata.get("variation_source") == "shape_keys_safe_range_plus_mobile_realism":
+        return MOBILE_REALISM_MIN_VIEW_DIFFERENCE_SCORE
+    return MIN_VIEW_DIFFERENCE_SCORE
+
+
+def audit_images(
+    dataset_root: Path,
+    rows: list[dict[str, str]],
+    min_view_difference_score: float = MIN_VIEW_DIFFERENCE_SCORE,
+) -> dict[str, Any]:
     warnings: list[str] = []
     errors: list[str] = []
     strict_failures: list[str] = []
@@ -246,7 +257,7 @@ def audit_images(dataset_root: Path, rows: list[dict[str, str]]) -> dict[str, An
         if set(sample_images) == set(CAMERA_VIEWS):
             for view_a, view_b in (("front", "side"), ("side", "back"), ("back", "front")):
                 score = view_difference_score(sample_images[view_a], sample_images[view_b])
-                passed = score >= MIN_VIEW_DIFFERENCE_SCORE
+                passed = score >= min_view_difference_score
                 view_scores.append(
                     {
                         "sample_id": sample_id,
@@ -276,7 +287,7 @@ def audit_images(dataset_root: Path, rows: list[dict[str, str]]) -> dict[str, An
         },
         "view_sanity": {
             "passed": view_sanity_passed,
-            "minimum_difference_score": MIN_VIEW_DIFFERENCE_SCORE,
+            "minimum_difference_score": min_view_difference_score,
             "scores": view_scores,
         },
         "warnings": warnings,
@@ -418,10 +429,11 @@ def audit_shape_key_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     strict_failures = []
     variation_source = metadata.get("variation_source")
     shape_key_count = metadata.get("shape_key_count")
-    variation_active = variation_source == "shape_keys_safe_range" and int(shape_key_count or 0) > 0
+    shape_key_variation_sources = {"shape_keys_safe_range", "shape_keys_safe_range_plus_mobile_realism"}
+    variation_active = variation_source in shape_key_variation_sources and int(shape_key_count or 0) > 0
     if variation_source == "static_blend_mesh":
         warnings.append("variation_source=static_blend_mesh: dataset is not suitable for serious training variation yet.")
-    elif variation_source == "shape_keys_safe_range" and variation_active:
+    elif variation_source in shape_key_variation_sources and variation_active:
         pass
     else:
         warnings.append(f"Unexpected variation_source={variation_source!r}; inspect blend metadata before training.")

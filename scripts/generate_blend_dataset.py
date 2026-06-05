@@ -18,6 +18,7 @@ from synthetic.blender.blend_dataset import (
     DEFAULT_IMAGE_WIDTH,
     DEFAULT_LABEL_NOISE_CM,
     DEFAULT_LABEL_MEASUREMENT_SCALE,
+    DEFAULT_MOBILE_REALISM_SETTINGS,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_POSE_VARIATION_DEGREES,
     DEFAULT_SAMPLE_COUNT,
@@ -60,6 +61,13 @@ def generate_blend_dataset(
     label_measurement_scale: float = DEFAULT_LABEL_MEASUREMENT_SCALE,
     view_subdirs: bool = False,
     safe_framing_scale: float = DEFAULT_SAFE_FRAMING_SCALE,
+    mobile_realism: bool = DEFAULT_MOBILE_REALISM_SETTINGS["mobile_realism"],
+    distance_jitter: float = DEFAULT_MOBILE_REALISM_SETTINGS["distance_jitter"],
+    camera_height_jitter: float = DEFAULT_MOBILE_REALISM_SETTINGS["camera_height_jitter"],
+    body_rotation_jitter: float = DEFAULT_MOBILE_REALISM_SETTINGS["body_rotation_jitter"],
+    lighting_jitter: float = DEFAULT_MOBILE_REALISM_SETTINGS["lighting_jitter"],
+    background_jitter: float = DEFAULT_MOBILE_REALISM_SETTINGS["background_jitter"],
+    phone_framing_jitter: float = DEFAULT_MOBILE_REALISM_SETTINGS["phone_framing_jitter"],
     overwrite: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -98,6 +106,13 @@ def generate_blend_dataset(
         label_measurement_scale=label_measurement_scale,
         view_subdirs=view_subdirs,
         safe_framing_scale=safe_framing_scale,
+        mobile_realism=mobile_realism,
+        distance_jitter=distance_jitter,
+        camera_height_jitter=camera_height_jitter,
+        body_rotation_jitter=body_rotation_jitter,
+        lighting_jitter=lighting_jitter,
+        background_jitter=background_jitter,
+        phone_framing_jitter=phone_framing_jitter,
     )
     if dry_run:
         return {
@@ -161,6 +176,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--label-measurement-scale", type=float, default=DEFAULT_LABEL_MEASUREMENT_SCALE)
     parser.add_argument("--view-subdirs", action="store_true")
     parser.add_argument("--safe-framing-scale", type=float, default=DEFAULT_SAFE_FRAMING_SCALE)
+    parser.add_argument("--mobile-realism", action="store_true")
+    parser.add_argument("--distance-jitter", type=float, default=DEFAULT_MOBILE_REALISM_SETTINGS["distance_jitter"])
+    parser.add_argument("--camera-height-jitter", type=float, default=DEFAULT_MOBILE_REALISM_SETTINGS["camera_height_jitter"])
+    parser.add_argument("--body-rotation-jitter", type=float, default=DEFAULT_MOBILE_REALISM_SETTINGS["body_rotation_jitter"])
+    parser.add_argument("--lighting-jitter", type=float, default=DEFAULT_MOBILE_REALISM_SETTINGS["lighting_jitter"])
+    parser.add_argument("--background-jitter", type=float, default=DEFAULT_MOBILE_REALISM_SETTINGS["background_jitter"])
+    parser.add_argument("--phone-framing-jitter", type=float, default=DEFAULT_MOBILE_REALISM_SETTINGS["phone_framing_jitter"])
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -186,6 +208,13 @@ def main(argv: list[str] | None = None) -> int:
         label_measurement_scale=args.label_measurement_scale,
         view_subdirs=args.view_subdirs,
         safe_framing_scale=args.safe_framing_scale,
+        mobile_realism=args.mobile_realism,
+        distance_jitter=args.distance_jitter,
+        camera_height_jitter=args.camera_height_jitter,
+        body_rotation_jitter=args.body_rotation_jitter,
+        lighting_jitter=args.lighting_jitter,
+        background_jitter=args.background_jitter,
+        phone_framing_jitter=args.phone_framing_jitter,
         overwrite=args.overwrite,
         dry_run=args.dry_run,
     )

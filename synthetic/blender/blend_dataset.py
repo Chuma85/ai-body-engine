@@ -36,9 +36,19 @@ SHAPE_KEY_COUPLED_LABEL_SOURCE = "shape_key_coupled_synthetic_formula"
 LABEL_GENERATION_MODE = "shape_key_coupled_synthetic"
 LABEL_FORMULA_VERSION = "shape_key_coupled_synthetic_v1"
 PHASE_3H_I_LABEL_FORMULA_VERSION = "shape_key_coupled_synthetic_v2_wide_safe_range"
+PHASE_3H_J_LABEL_FORMULA_VERSION = PHASE_3H_I_LABEL_FORMULA_VERSION
 DEFAULT_LABEL_NOISE_CM = 0.15
 DEFAULT_LABEL_MEASUREMENT_SCALE = 1.0
 DEFAULT_SAFE_FRAMING_SCALE = 1.0
+DEFAULT_MOBILE_REALISM_SETTINGS = {
+    "mobile_realism": False,
+    "distance_jitter": 0.0,
+    "camera_height_jitter": 0.0,
+    "body_rotation_jitter": 0.0,
+    "lighting_jitter": 0.0,
+    "background_jitter": 0.0,
+    "phone_framing_jitter": 0.0,
+}
 LEGACY_BLEND_LABEL_COLUMNS = [
     "sample_id",
     "front_image",
@@ -247,6 +257,13 @@ def build_blend_blender_command(
     label_measurement_scale: float = DEFAULT_LABEL_MEASUREMENT_SCALE,
     view_subdirs: bool = False,
     safe_framing_scale: float = DEFAULT_SAFE_FRAMING_SCALE,
+    mobile_realism: bool = False,
+    distance_jitter: float = 0.0,
+    camera_height_jitter: float = 0.0,
+    body_rotation_jitter: float = 0.0,
+    lighting_jitter: float = 0.0,
+    background_jitter: float = 0.0,
+    phone_framing_jitter: float = 0.0,
     camera_names: dict[str, str] | None = None,
 ) -> list[str]:
     names = camera_names or DEFAULT_CAMERA_NAMES
@@ -285,6 +302,18 @@ def build_blend_blender_command(
         str(label_measurement_scale),
         "--safe-framing-scale",
         str(safe_framing_scale),
+        "--distance-jitter",
+        str(distance_jitter),
+        "--camera-height-jitter",
+        str(camera_height_jitter),
+        "--body-rotation-jitter",
+        str(body_rotation_jitter),
+        "--lighting-jitter",
+        str(lighting_jitter),
+        "--background-jitter",
+        str(background_jitter),
+        "--phone-framing-jitter",
+        str(phone_framing_jitter),
         "--front-camera",
         names["front"],
         "--side-camera",
@@ -294,6 +323,8 @@ def build_blend_blender_command(
     ]
     if view_subdirs:
         command.append("--view-subdirs")
+    if mobile_realism:
+        command.append("--mobile-realism")
     return command
 
 

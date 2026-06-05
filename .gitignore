@@ -159,6 +159,8 @@ data/synthetic/phase_3h_g_coupled_smoke/
 data/synthetic/phase_3h_h_coupled_250/
 data/synthetic/phase_3h_i_coupled_1000/
 data/synthetic/phase_3h_i_coupled_smoke/
+data/synthetic/phase_3h_j_mobile_realism_1000/
+data/synthetic/phase_3h_j_mobile_realism_smoke/
 data/synthetic/phase_3t_enhanced/
 *.blend
 *.blend1

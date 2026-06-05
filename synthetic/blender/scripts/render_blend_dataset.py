@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 import random
 import sys
@@ -25,6 +26,7 @@ from synthetic.blender.blend_dataset import (
     DEFAULT_IMAGE_WIDTH,
     DEFAULT_LABEL_NOISE_CM,
     DEFAULT_LABEL_MEASUREMENT_SCALE,
+    DEFAULT_MOBILE_REALISM_SETTINGS,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_POSE_VARIATION_DEGREES,
     DEFAULT_SAFE_FRAMING_SCALE,
@@ -66,6 +68,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--label-measurement-scale", type=float, default=DEFAULT_LABEL_MEASUREMENT_SCALE)
     parser.add_argument("--view-subdirs", action="store_true")
     parser.add_argument("--safe-framing-scale", type=float, default=DEFAULT_SAFE_FRAMING_SCALE)
+    parser.add_argument("--mobile-realism", action="store_true")
+    parser.add_argument("--distance-jitter", type=float, default=DEFAULT_MOBILE_REALISM_SETTINGS["distance_jitter"])
+    parser.add_argument("--camera-height-jitter", type=float, default=DEFAULT_MOBILE_REALISM_SETTINGS["camera_height_jitter"])
+    parser.add_argument("--body-rotation-jitter", type=float, default=DEFAULT_MOBILE_REALISM_SETTINGS["body_rotation_jitter"])
+    parser.add_argument("--lighting-jitter", type=float, default=DEFAULT_MOBILE_REALISM_SETTINGS["lighting_jitter"])
+    parser.add_argument("--background-jitter", type=float, default=DEFAULT_MOBILE_REALISM_SETTINGS["background_jitter"])
+    parser.add_argument("--phone-framing-jitter", type=float, default=DEFAULT_MOBILE_REALISM_SETTINGS["phone_framing_jitter"])
     parser.add_argument("--front-camera", default=DEFAULT_CAMERA_NAMES["front"])
     parser.add_argument("--side-camera", default=DEFAULT_CAMERA_NAMES["side"])
     parser.add_argument("--back-camera", default=DEFAULT_CAMERA_NAMES["back"])
@@ -78,6 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("--samples must be greater than 0")
     if args.start_index <= 0:
         raise ValueError("--start-index must be greater than 0")
+    realism_settings = mobile_realism_settings(args)
 
     try:
         import bpy
@@ -97,10 +107,15 @@ def main(argv: list[str] | None = None) -> int:
     }
     cameras = find_required_cameras(bpy, camera_names)
     apply_safe_framing_scale(cameras, args.safe_framing_scale)
+    base_camera_states = capture_camera_states(cameras)
+    base_light_energies = capture_light_energies(bpy)
+    base_world_color = tuple(bpy.context.scene.world.color)
     meshes = find_human_meshes(bpy)
     armatures = find_armatures(bpy)
     shape_key_blocks = collect_shape_key_blocks(meshes)
     variation_source = "shape_keys_safe_range" if shape_key_blocks else "static_blend_mesh"
+    if shape_key_blocks and args.mobile_realism:
+        variation_source = "shape_keys_safe_range_plus_mobile_realism"
     warnings = [] if shape_key_blocks else [STATIC_BLEND_WARNING]
 
     output_root = resolve_repo_path(args.out)
@@ -113,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     metadata_path = output_root / "metadata.json"
     rng = random.Random(args.seed)
     initial_armature_rotations = {armature.name: tuple(armature.rotation_euler) for armature in armatures}
+    initial_mesh_rotations = {mesh.name: tuple(mesh.rotation_euler) for mesh in meshes}
     labels: list[dict[str, object]] = []
     samples_metadata: list[dict[str, object]] = []
 
@@ -122,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         sample_id = f"sample_{index:06d}"
         reset_shape_keys(shape_key_blocks)
         reset_armature_rotations(armatures, initial_armature_rotations)
+        reset_object_rotations(meshes, initial_mesh_rotations)
         sample_rng = random.Random(f"{args.seed}:{sample_id}")
         shape_key_values = apply_shape_key_variation(shape_key_blocks, sample_rng, args.shape_key_range)
         label_payload = generate_shape_key_coupled_measurements(
@@ -138,8 +155,20 @@ def main(argv: list[str] | None = None) -> int:
             view: image_path_for_view(images_dir, sample_id, view, args.view_subdirs)
             for view in CAMERA_VIEWS
         }
+        sample_realism = sample_mobile_realism(realism_settings, sample_rng)
+        apply_mobile_lighting_and_background(
+            bpy,
+            settings=realism_settings,
+            sample_realism=sample_realism,
+            base_light_energies=base_light_energies,
+            base_world_color=base_world_color,
+        )
 
         for view in CAMERA_VIEWS:
+            reset_camera_state(cameras[view], base_camera_states[view])
+            reset_object_rotations(meshes, initial_mesh_rotations)
+            apply_mobile_body_rotation(meshes, sample_realism["views"][view]["body_yaw_degrees"])
+            apply_mobile_camera_realism(cameras[view], sample_realism["views"][view])
             bpy.context.scene.camera = cameras[view]
             render_view(bpy, image_paths[view], args.image_width, args.image_height)
 
@@ -169,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
                     "body_factors": label_payload["factors"],
                     "body_shape_profile_id": label_payload["body_shape_profile_id"],
                 },
+                "mobile_realism": sample_realism,
                 "labels": label_payload["measurements"],
                 "label_generation_mode": LABEL_GENERATION_MODE,
                 "label_formula_version": args.label_formula_version,
@@ -191,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
         "variation_source": variation_source,
         "shape_key_count": len(shape_key_blocks),
         "safe_framing_scale": args.safe_framing_scale,
+        "mobile_realism": bool(args.mobile_realism),
+        "mobile_realism_settings": realism_settings,
         **shape_key_label_metadata_for_version(
             seed=args.seed,
             label_formula_version=args.label_formula_version,
@@ -225,6 +257,141 @@ def find_required_cameras(bpy, camera_names: dict[str, str]) -> dict[str, object
             f"or matching --front-camera/--side-camera/--back-camera names; {'; '.join(details)}"
         )
     return {view: bpy.data.objects[name] for view, name in camera_names.items()}
+
+
+def mobile_realism_settings(args: argparse.Namespace) -> dict[str, object]:
+    settings = {
+        "mobile_realism": bool(args.mobile_realism),
+        "distance_jitter": float(args.distance_jitter),
+        "camera_height_jitter": float(args.camera_height_jitter),
+        "body_rotation_jitter": float(args.body_rotation_jitter),
+        "lighting_jitter": float(args.lighting_jitter),
+        "background_jitter": float(args.background_jitter),
+        "phone_framing_jitter": float(args.phone_framing_jitter),
+    }
+    limits = {
+        "distance_jitter": 0.08,
+        "camera_height_jitter": 0.08,
+        "body_rotation_jitter": 6.0,
+        "lighting_jitter": 0.18,
+        "background_jitter": 0.12,
+        "phone_framing_jitter": 0.04,
+    }
+    for key, upper in limits.items():
+        value = float(settings[key])
+        if value < 0.0 or value > upper:
+            raise ValueError(f"--{key.replace('_', '-')} must be between 0.0 and {upper}.")
+    if not settings["mobile_realism"]:
+        for key in limits:
+            settings[key] = 0.0
+    return settings
+
+
+def capture_camera_states(cameras: dict[str, object]) -> dict[str, dict[str, object]]:
+    states: dict[str, dict[str, object]] = {}
+    for view, camera in cameras.items():
+        data = getattr(camera, "data", None)
+        states[view] = {
+            "location": tuple(camera.location),
+            "rotation_euler": tuple(camera.rotation_euler),
+            "ortho_scale": float(getattr(data, "ortho_scale", 0.0)) if data is not None else 0.0,
+            "lens": float(getattr(data, "lens", 0.0)) if data is not None else 0.0,
+            "shift_x": float(getattr(data, "shift_x", 0.0)) if data is not None else 0.0,
+            "shift_y": float(getattr(data, "shift_y", 0.0)) if data is not None else 0.0,
+        }
+    return states
+
+
+def reset_camera_state(camera: object, state: dict[str, object]) -> None:
+    camera.location = state["location"]
+    camera.rotation_euler = state["rotation_euler"]
+    data = getattr(camera, "data", None)
+    if data is None:
+        return
+    if hasattr(data, "ortho_scale"):
+        data.ortho_scale = state["ortho_scale"]
+    if hasattr(data, "lens"):
+        data.lens = state["lens"]
+    if hasattr(data, "shift_x"):
+        data.shift_x = state["shift_x"]
+    if hasattr(data, "shift_y"):
+        data.shift_y = state["shift_y"]
+
+
+def capture_light_energies(bpy) -> dict[str, float]:
+    return {obj.name: float(obj.data.energy) for obj in bpy.data.objects if obj.type == "LIGHT" and hasattr(obj.data, "energy")}
+
+
+def sample_mobile_realism(settings: dict[str, object], rng: random.Random) -> dict[str, object]:
+    enabled = bool(settings["mobile_realism"])
+    lighting_jitter = float(settings["lighting_jitter"]) if enabled else 0.0
+    background_jitter = float(settings["background_jitter"]) if enabled else 0.0
+    payload: dict[str, object] = {
+        "enabled": enabled,
+        "lighting_multiplier": round(rng.uniform(1.0 - lighting_jitter, 1.0 + lighting_jitter), 6),
+        "background_brightness": round(rng.uniform(1.0 - background_jitter, 1.0 + background_jitter), 6),
+        "background_color_delta": [
+            round(rng.uniform(-background_jitter, background_jitter), 6),
+            round(rng.uniform(-background_jitter, background_jitter), 6),
+            round(rng.uniform(-background_jitter, background_jitter), 6),
+        ],
+        "views": {},
+    }
+    for view in CAMERA_VIEWS:
+        distance = float(settings["distance_jitter"]) if enabled else 0.0
+        framing = float(settings["phone_framing_jitter"]) if enabled else 0.0
+        height = float(settings["camera_height_jitter"]) if enabled else 0.0
+        rotation = float(settings["body_rotation_jitter"]) if enabled else 0.0
+        payload["views"][view] = {
+            "distance_scale": round(rng.uniform(1.0 - distance, 1.0 + distance), 6),
+            "camera_height_offset": round(rng.uniform(-height, height), 6),
+            "framing_shift_x": round(rng.uniform(-framing, framing), 6),
+            "framing_shift_y": round(rng.uniform(-framing, framing), 6),
+            "body_yaw_degrees": round(rng.uniform(-rotation, rotation), 6),
+        }
+    return payload
+
+
+def apply_mobile_lighting_and_background(
+    bpy,
+    *,
+    settings: dict[str, object],
+    sample_realism: dict[str, object],
+    base_light_energies: dict[str, float],
+    base_world_color: tuple[float, float, float],
+) -> None:
+    if not bool(settings["mobile_realism"]):
+        return
+    lighting_multiplier = float(sample_realism["lighting_multiplier"])
+    for obj in bpy.data.objects:
+        if obj.type == "LIGHT" and obj.name in base_light_energies and hasattr(obj.data, "energy"):
+            obj.data.energy = base_light_energies[obj.name] * lighting_multiplier
+    brightness = float(sample_realism["background_brightness"])
+    deltas = sample_realism["background_color_delta"]
+    color = [
+        max(0.0, min(1.0, float(base_world_color[index]) * brightness + float(deltas[index])))
+        for index in range(3)
+    ]
+    bpy.context.scene.world.color = (color[0], color[1], color[2])
+
+
+def apply_mobile_camera_realism(camera: object, view_realism: dict[str, float]) -> None:
+    data = getattr(camera, "data", None)
+    if data is not None and getattr(data, "type", "") == "ORTHO" and hasattr(data, "ortho_scale"):
+        data.ortho_scale = float(data.ortho_scale) * float(view_realism["distance_scale"])
+    elif data is not None and hasattr(data, "lens"):
+        data.lens = max(1.0, float(data.lens) / float(view_realism["distance_scale"]))
+    camera.location[2] += float(view_realism["camera_height_offset"])
+    if data is not None and hasattr(data, "shift_x"):
+        data.shift_x += float(view_realism["framing_shift_x"])
+    if data is not None and hasattr(data, "shift_y"):
+        data.shift_y += float(view_realism["framing_shift_y"])
+
+
+def apply_mobile_body_rotation(meshes: list[object], yaw_degrees: float) -> None:
+    yaw_radians = float(yaw_degrees) * math.pi / 180.0
+    for mesh in meshes:
+        mesh.rotation_euler[2] += yaw_radians
 
 
 def apply_safe_framing_scale(cameras: dict[str, object], safe_framing_scale: float) -> None:
@@ -295,6 +462,12 @@ def reset_armature_rotations(armatures: list[object], initial_rotations: dict[st
     for armature in armatures:
         if armature.name in initial_rotations:
             armature.rotation_euler = initial_rotations[armature.name]
+
+
+def reset_object_rotations(objects: list[object], initial_rotations: dict[str, tuple[float, float, float]]) -> None:
+    for obj in objects:
+        if obj.name in initial_rotations:
+            obj.rotation_euler = initial_rotations[obj.name]
 
 
 def apply_pose_variation(armatures: list[object], rng: random.Random, limit_degrees: float) -> float:
