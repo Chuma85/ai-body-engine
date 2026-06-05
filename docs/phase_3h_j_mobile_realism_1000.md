@@ -1,20 +1,18 @@
-# Phase 3H-J Mobile Realism Workflow Checkpoint
+# Phase 3H-J Mobile Realism 1000-Sample Blender Dataset
 
-Phase 3H-J infrastructure is implemented, but the full Phase 3H-J dataset is not currently restored and this checkpoint must not be treated as a completed dataset phase.
+Phase 3H-J is completed locally. It extends the Phase 3H-I safe-framed coupled Blender dataset with conservative mobile-camera realism while preserving synthetic label traceability and front/side/back view separation.
 
-This phase adds conservative mobile-camera realism controls on top of the Phase 3H-I safe-framed coupled Blender workflow. The code supports deterministic jitter for camera distance, camera height, body yaw, lighting, background tone, and phone framing while preserving synthetic label traceability.
+This phase does not claim real-world validation. Generated labels remain synthetic, `synthetic_labels=true`, and `real_world_validated=false`.
 
-This phase does not claim real-world validation. Generated labels remain synthetic, and `real_world_validated=false` is preserved.
+## Dataset
 
-## Current Dataset State
-
-Expected final dataset path:
+Final merged dataset path:
 
 ```text
 data/synthetic/phase_3h_j_mobile_realism_1000
 ```
 
-Expected final structure:
+Final structure:
 
 ```text
 labels.csv
@@ -24,37 +22,15 @@ images/side
 images/back
 ```
 
-Current state:
+Final counts:
 
-- Phase 3H-J infrastructure is implemented.
-- The full dataset generation was interrupted.
-- The expected final dataset path is currently missing: `data/synthetic/phase_3h_j_mobile_realism_1000`.
-- `labels.csv`, `metadata.json`, and `images/front`, `images/side`, `images/back` are not currently present at the final dataset path.
-- Prior artifact reports exist, but they are not enough to treat the dataset as restored.
-- The next required step is a clean full regeneration or resumable generation that preserves the final merged dataset.
+- Labels: `1000`
+- PNG images: `3000`
+- Views: `front`, `side`, `back`
+- Metadata: present
+- Clipped views: `0`
 
 Generated dataset files are ignored/local and should not be committed.
-
-## Prior Artifact Reports
-
-The following reports exist from a prior successful run:
-
-```text
-artifacts/phase_3h_j_mobile_realism_1000_audit/audit_report.json
-artifacts/phase_3h_j_mobile_realism_label_visual_correlation/correlation_report.json
-artifacts/phase_3h_j_mobile_realism_blend_baseline/metrics.json
-```
-
-These reports are useful evidence for debugging and comparison, but they do not replace the missing final merged dataset. Phase 3H-J should not be marked complete until the final dataset path exists and can be validated in no-render mode.
-
-Prior report metrics included:
-
-- Reported labels: `1000`
-- Reported PNG images: `3000`
-- Strict audit: passed
-- Audit warnings/errors/flagged: `0/0/0`
-- Best benchmark model: `ridge`
-- Overall mean MAE: `1.9239 cm`
 
 ## Realism Settings
 
@@ -73,7 +49,7 @@ Phase 3H-J keeps the Phase 3H-I coupled shape-key labels and safe framing, then 
 }
 ```
 
-Metadata requirements for a future completed full dataset:
+Metadata requirements:
 
 - `mobile_realism=true`
 - `variation_source=shape_keys_safe_range_plus_mobile_realism`
@@ -82,7 +58,11 @@ Metadata requirements for a future completed full dataset:
 - `synthetic_labels=true`
 - `real_world_validated=false`
 
-## Recovery Commands
+## Recovery Note
+
+The first full clean generation produced all four chunks and merged the final dataset, but chunk `000001_000250` contained flat black renders from sample 58/59 onward. The failed images were detected before benchmark use. The repair replaced only `chunk_000001_000250`; chunks `000251_000500`, `000501_000750`, and `000751_001000` were preserved. The final dataset was then rebuilt from the four completed chunks and validated with `--no-render`.
+
+## Commands
 
 Smoke:
 
@@ -90,36 +70,66 @@ Smoke:
 python scripts/verify_phase_3h_j_mobile_realism_1000.py --samples 25 --batch-size 25 --smoke --force
 ```
 
-Full generation:
+Full clean generation:
 
 ```bash
 python scripts/verify_phase_3h_j_mobile_realism_1000.py --force --batch-size 250
 ```
 
-No-render validation after the final merged dataset exists:
+Chunk repair used after the first generated chunk contained invalid flat renders:
+
+```bash
+python scripts/generate_blend_dataset.py --source blend --blend-file assets/body_meshes/base_body_scene.blend --out artifacts/phase_3h_j_mobile_realism_generation_batches/chunk_000001_000250 --samples 250 --seed 42 --start-index 1 --blender-executable "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe" --shape-key-range 0.24 --label-formula-version shape_key_coupled_synthetic_v2_wide_safe_range --label-measurement-scale 2.0 --safe-framing-scale 1.34 --distance-jitter 0.015 --camera-height-jitter 0.015 --body-rotation-jitter 2.0 --lighting-jitter 0.08 --background-jitter 0.04 --phone-framing-jitter 0.006 --view-subdirs --mobile-realism --overwrite
+```
+
+Final merge and benchmark from completed chunks:
+
+```bash
+python scripts/verify_phase_3h_j_mobile_realism_1000.py --resume --batch-size 250
+```
+
+Final no-render validation:
 
 ```bash
 python scripts/verify_phase_3h_j_mobile_realism_1000.py --no-render
 ```
 
-`--no-render` and `--reuse-existing` never call Blender and never regenerate PNGs. They require the final merged dataset path to exist first; if the dataset is missing, the verifier fails clearly instead of attempting recovery.
+`--no-render` and `--reuse-existing` never call Blender and never regenerate PNGs. They require the final merged dataset path to exist first.
 
-## Recovery Requirements
+## Smoke Result
 
-Before Phase 3H-J can be treated as complete:
+- Labels: `25`
+- PNG images: `75`
+- Metadata: present
+- Front/side/back folders: present
+- Clipped views: `0`
+- Benchmark: skipped
 
-- The final path `data/synthetic/phase_3h_j_mobile_realism_1000` must exist.
-- `labels.csv` must contain `1000` rows.
-- `metadata.json` must exist.
-- `images/front`, `images/side`, and `images/back` must exist.
-- The dataset must contain `3000` PNGs.
-- The clipping audit must report `0` clipped views.
-- Strict audit, correlation, and benchmark must pass from the final merged dataset.
-- `python scripts/verify_phase_3h_j_mobile_realism_1000.py --no-render` must pass.
+## Full Audit Result
 
-## Benchmark Context From Prior Reports
+Audit output:
 
-Prior report correlation by target:
+```text
+artifacts/phase_3h_j_mobile_realism_1000_audit
+```
+
+Final strict audit:
+
+- Strict audit passed: `True`
+- Warnings: `0`
+- Errors: `0`
+- Flagged samples: `0`
+- Clipped views: `0`
+
+## Correlation Result
+
+Correlation output:
+
+```text
+artifacts/phase_3h_j_mobile_realism_label_visual_correlation
+```
+
+Strongest visual correlation by target:
 
 - `height_cm`: `0.3558` via `front_projection_column_height_std`
 - `chest_cm`: `0.3564` via `mean_projection_column_height_mean`
@@ -128,7 +138,21 @@ Prior report correlation by target:
 - `shoulder_cm`: `0.4995` via `front_neck_width_ratio`
 - `inseam_cm`: `0.3630` via `front_torso_area_ratio`
 
-Prior report MAE by target:
+Weak targets below `0.25`: none.
+
+## Benchmark Result
+
+Benchmark output:
+
+```text
+artifacts/phase_3h_j_mobile_realism_blend_baseline
+```
+
+Best model: `ridge`
+
+Overall mean MAE: `1.9239 cm`
+
+MAE by target:
 
 - `height_cm`: `3.2723`
 - `chest_cm`: `1.7146`
@@ -137,18 +161,30 @@ Prior report MAE by target:
 - `shoulder_cm`: `0.9750`
 - `inseam_cm`: `1.8934`
 
-Prior report comparison to Phase 3H-I:
+Train/test split: `800/200`
 
-- Phase 3H-I overall mean MAE: `1.7486 cm`
-- Phase 3H-J report overall mean MAE: `1.9239 cm`
-- Delta: `+0.1753 cm`
+## Comparison To Phase 3H-I
 
-These values should be refreshed after a clean restored or regenerated final dataset is validated.
+Phase 3H-I overall mean MAE: `1.7486 cm`
+
+Phase 3H-J overall mean MAE: `1.9239 cm`
+
+Delta: `+0.1753 cm`
+
+Target deltas vs Phase 3H-I:
+
+- `height_cm`: worsened by `0.1771`
+- `chest_cm`: worsened by `0.1675`
+- `waist_cm`: worsened by `0.4899`
+- `hip_cm`: worsened by `0.0716`
+- `shoulder_cm`: worsened by `0.0515`
+- `inseam_cm`: worsened by `0.0941`
+
+Phase 3H-J is slightly worse than Phase 3H-I, as expected for a harder mobile-realism dataset, but remains in the intended synthetic benchmark range for this phase.
 
 ## Limitations
 
-- This is an infrastructure checkpoint, not a completed dataset checkpoint.
-- The final merged full dataset is missing at the time of this commit.
-- Existing reports alone are not sufficient to prove the current dataset is usable.
 - This remains synthetic-only Blender data and is not real-world validated.
 - Mobile realism is conservative: no distracting room objects, clothing, camera blur, device sensor noise, or real user capture artifacts yet.
+- The baseline feature pipeline is still silhouette-heavy, so background and framing realism can reduce apparent correlation for some targets.
+- Generated PNG/CSV/metadata files and benchmark artifacts remain ignored/local.
