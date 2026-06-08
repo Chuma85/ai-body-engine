@@ -58,6 +58,25 @@ def test_missing_front_or_side_image_fails_clearly(tmp_path: Path) -> None:
         inference.run_body_ai_measurement("sample_003", front, tmp_path / "missing_side.png", predictions_csv=predictions)
 
 
+def test_normalized_reference_compatibility_path_skips_file_validation(tmp_path: Path) -> None:
+    predictions = _prediction_fixture(tmp_path)
+    service = inference.BodyAIMeasurementService(predictions_csv=predictions)
+
+    result = service.predict_from_normalized_references(
+        scan_id="sample_003",
+        height_cm=170.0,
+        user_id="user_a",
+        order_id="order_a",
+        generated_at="2026-05-27T00:00:00Z",
+    )
+    payload = result.to_payload()
+
+    assert payload["sample_id"] == "sample_003"
+    assert payload["metadata"]["pipeline_version"] == "phase_4g_measurement_result_contract"
+    assert "user_id: user_a" in payload["caveats"]
+    assert "order_id: order_a" in payload["caveats"]
+
+
 def test_unavailable_model_artifact_fails_clearly(tmp_path: Path) -> None:
     front, side = _image_fixtures(tmp_path)
 

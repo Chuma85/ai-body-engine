@@ -70,6 +70,28 @@ class BodyAIMeasurementService:
         result = self._apply_request_context(result, scan_id, user_id, order_id, height_cm)
         return self._apply_version_overrides(result)
 
+    def predict_from_normalized_references(
+        self,
+        scan_id: str,
+        height_cm: float | None = None,
+        user_id: str | None = None,
+        order_id: str | None = None,
+        demo_sample_id: str | None = None,
+        generated_at: str | None = None,
+    ) -> MeasurementResult:
+        """Run the current demo estimator after an API layer has validated scan references."""
+        if not self.predictions_csv.exists():
+            raise FileNotFoundError(f"Local demo prediction artifact is unavailable: {self.predictions_csv}")
+        sample_id = demo_sample_id or sample_id_from_scan(scan_id) or DEFAULT_SAMPLE_ID
+        result = build_measurement_result_from_predictions(
+            self.predictions_csv,
+            run_name=self.run_name,
+            sample_id=sample_id,
+            generated_at=generated_at,
+        )
+        result = self._apply_request_context(result, scan_id, user_id, order_id, height_cm)
+        return self._apply_version_overrides(result)
+
     def _apply_request_context(
         self,
         result: MeasurementResult,

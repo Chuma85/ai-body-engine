@@ -2,12 +2,14 @@ from fastapi import FastAPI
 
 from app.api.routes.design_agent_virtual_fitting import router as design_agent_virtual_fitting_router
 from app.api.routes.health import router as health_router
+from app.api.routes.three_view_measurements import router as three_view_measurements_router
 from app.core.config import settings
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 
 app.include_router(health_router)
 app.include_router(design_agent_virtual_fitting_router)
+app.include_router(three_view_measurements_router)
 
 
 @app.get("/")
