@@ -1,0 +1,45 @@
+{
+  "benchmarkExecuted": false,
+  "blockers": [
+    {
+      "discoveredCandidates": [],
+      "kind": "missing_dataset",
+      "message": "No verified FashionApp dataset root was found."
+    },
+    {
+      "discoveredCandidates": [],
+      "kind": "missing_metadata_candidate_artifact",
+      "message": "No H.2 metadata candidate model.json was found."
+    },
+    {
+      "discoveredCandidates": [],
+      "kind": "missing_vision_candidate_artifact",
+      "message": "No H.5 vision candidate vision_model.json was found."
+    },
+    {
+      "discoveredCandidates": [],
+      "kind": "missing_vision_weights",
+      "message": "No H.5 vision candidate vision_model.pt was found."
+    }
+  ],
+  "expectedOutputs": [
+    "vision_candidate_evaluation_metrics.json",
+    "vision_candidate_benchmark_report.md",
+    "vision_ablation_report.json",
+    "vision_view_contribution_report.json",
+    "vision_confidence_calibration_report.json",
+    "vision_promotion_recommendation.json"
+  ],
+  "generatedAt": "2026-06-09T11:02:50Z",
+  "inventory": {
+    "metadataCandidateModels": [],
+    "verifiedDatasets": [],
+    "visionCandidateModels": [],
+    "visionWeights": []
+  },
+  "liveApiBehaviorChanged": false,
+  "nextAction": "Provide a verified FashionApp dataset plus matching H.2 metadata and H.5 vision candidate artifacts, then rerun this script.",
+  "productionModelUpdated": false,
+  "schemaVersion": "phase_h6_1_benchmark_execution_status_v1",
+  "status": "blocked"
+}
