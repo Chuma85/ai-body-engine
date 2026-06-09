@@ -309,6 +309,7 @@ class MultimodalVerifiedDataset:
             "finalApprovedMeasurements": sample["final_approved_measurements"],
             "lineage": sample["lineage"],
             "correctionDeltas": sample["correction_deltas"],
+            "rawRecord": sample["raw_record"],
             "readinessState": readiness_state_for_sample(images, sample),
         }
 
