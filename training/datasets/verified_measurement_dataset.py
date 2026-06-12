@@ -9,6 +9,13 @@ import statistics
 import sys
 from typing import Any, Iterator
 
+from training.measurements.measurement_targets import (
+    GENDER_MEASUREMENT_SCHEMA_VERSION,
+    profile_type_from_payload,
+    target_available_for_profile,
+    targets_for_profile,
+)
+
 
 DEFAULT_RECORD_FILES = (
     "records.jsonl",
@@ -19,7 +26,7 @@ DEFAULT_RECORD_FILES = (
 )
 LINEAGE_KEYS = ("ai_estimate", "customer_edit", "maker_adjustment", "final_approved")
 REQUIRED_IMAGE_VIEWS = ("front", "side", "back")
-SUPPORTED_VERSION_PATTERN = re.compile(r"^v[1-9][0-9]*$")
+SUPPORTED_VERSION_PATTERN = re.compile(r"^(v[1-9][0-9]*|gender_measurement_schema_v1)$")
 
 
 class VerifiedMeasurementDatasetError(ValueError):
@@ -30,6 +37,7 @@ class VerifiedMeasurementDatasetError(ValueError):
 class VerifiedMeasurementRecord:
     sample_id: str
     dataset_version: str
+    profile_type: str
     front_image_path: Path
     side_image_path: Path
     back_image_path: Path
@@ -94,6 +102,8 @@ class VerifiedMeasurementDatasetLoader:
         sample = {
             "sample_id": record.sample_id,
             "dataset_version": record.dataset_version,
+            "profile_type": record.profile_type,
+            "measurement_schema_version": GENDER_MEASUREMENT_SCHEMA_VERSION if record.dataset_version == GENDER_MEASUREMENT_SCHEMA_VERSION else None,
             "front_image_path": record.front_image_path,
             "side_image_path": record.side_image_path,
             "back_image_path": record.back_image_path,
@@ -105,6 +115,7 @@ class VerifiedMeasurementDatasetLoader:
             "confidence_metadata": record.confidence_metadata,
             "eligibility_metadata": record.eligibility_metadata,
             "final_approved_measurements": record.final_approved_measurements,
+            "target_availability": target_availability_for_record(record),
             "raw_record": record.raw_record,
         }
         if self.load_images:
@@ -164,9 +175,16 @@ class VerifiedMeasurementDatasetLoader:
         confidence_distribution: dict[str, int] = {}
         correction_values: dict[str, list[float]] = {}
         versions: dict[str, int] = {}
+        profile_types: dict[str, int] = {}
+        unavailable_by_profile: dict[str, dict[str, int]] = {}
 
         for record in self.records:
             _increment(versions, record.dataset_version)
+            _increment(profile_types, record.profile_type)
+            for target in record.final_approved_measurements:
+                if not target_available_for_profile(target, record.profile_type):
+                    unavailable_by_profile.setdefault(record.profile_type, {})
+                    _increment(unavailable_by_profile[record.profile_type], target)
             for measurement, value in record.final_approved_measurements.items():
                 if _is_present(value):
                     _increment(measurement_counts, measurement)
@@ -179,6 +197,8 @@ class VerifiedMeasurementDatasetLoader:
         return {
             "record_count": record_count,
             "dataset_versions": versions,
+            "profile_type_distribution": profile_types,
+            "profile_incompatible_measurements": unavailable_by_profile,
             "measurement_coverage": {
                 target: {
                     "count": count,
@@ -272,10 +292,11 @@ class VerifiedMeasurementDatasetLoader:
         )
         if not SUPPORTED_VERSION_PATTERN.match(dataset_version):
             raise VerifiedMeasurementDatasetError(
-                f"Record {row_number} has unsupported dataset_version '{dataset_version}'. Expected v1, v2, v3, ..."
+                f"Record {row_number} has unsupported dataset_version '{dataset_version}'. Expected v1, v2, v3, ..., or {GENDER_MEASUREMENT_SCHEMA_VERSION}."
             )
 
         sample_id = str(_first_present(raw_record, "sample_id", "sampleId", "id") or f"record_{row_number:06d}")
+        profile_type = profile_type_from_payload(raw_record)
         image_refs = _coerce_dict(_first_present(raw_record, "image_references", "imageReferences", "images", "views"))
         front_ref = _image_reference(raw_record, image_refs, "front")
         side_ref = _image_reference(raw_record, image_refs, "side")
@@ -285,6 +306,7 @@ class VerifiedMeasurementDatasetLoader:
         return VerifiedMeasurementRecord(
             sample_id=sample_id,
             dataset_version=dataset_version,
+            profile_type=profile_type,
             front_image_path=self._resolve_dataset_path(front_ref),
             side_image_path=self._resolve_dataset_path(side_ref),
             back_image_path=self._resolve_dataset_path(back_ref),
@@ -328,6 +350,25 @@ def _normalize_lineage(record: dict[str, Any]) -> dict[str, dict[str, Any]]:
             _first_present(lineage, "final_approved", "finalApproved", "final_approved_measurements", "finalApprovedMeasurements")
             or _first_present(record, "final_approved_measurements", "finalApprovedMeasurements")
         ),
+    }
+
+
+def target_availability_for_record(record: VerifiedMeasurementRecord) -> dict[str, Any]:
+    available_targets = targets_for_profile(record.profile_type)
+    present_targets = [
+        target
+        for target, value in record.final_approved_measurements.items()
+        if _is_present(value)
+    ]
+    return {
+        "schemaVersion": GENDER_MEASUREMENT_SCHEMA_VERSION,
+        "profileType": record.profile_type,
+        "availableTargets": available_targets,
+        "presentTargets": present_targets,
+        "missingAvailableTargets": [target for target in available_targets if target not in present_targets],
+        "profileIncompatiblePresentTargets": [
+            target for target in present_targets if not target_available_for_profile(target, record.profile_type)
+        ],
     }
 
 
@@ -449,6 +490,10 @@ def format_quality_report(report: dict[str, Any]) -> str:
     ]
     for version, count in stats["dataset_versions"].items():
         lines.append(f"- `{version}`: {count}")
+
+    lines.extend(["", "## Profile Types", ""])
+    for profile_type, count in stats["profile_type_distribution"].items():
+        lines.append(f"- `{profile_type}`: {count}")
 
     lines.extend(["", "## Measurement Coverage", "", "| Measurement | Count | Coverage |", "| --- | ---: | ---: |"])
     for measurement, coverage in stats["measurement_coverage"].items():

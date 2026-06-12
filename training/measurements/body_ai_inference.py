@@ -21,6 +21,7 @@ from training.measurements.measurement_result_schema import (
     manual_user_input_result,
     write_json,
 )
+from training.measurements.measurement_targets import ProfileType, normalize_profile_type
 
 SAMPLE_INFERENCE_RESULT_JSON = "sample_inference_result.json"
 INFERENCE_SUMMARY_MD = "inference_wrapper_summary.md"
@@ -52,6 +53,7 @@ class BodyAIMeasurementService:
         front_image_path: str | Path,
         side_image_path: str | Path,
         height_cm: float | None = None,
+        profile_type: str = ProfileType.UNSPECIFIED.value,
         user_id: str | None = None,
         order_id: str | None = None,
         demo_sample_id: str | None = None,
@@ -65,6 +67,7 @@ class BodyAIMeasurementService:
             self.predictions_csv,
             run_name=self.run_name,
             sample_id=sample_id,
+            profile_type=profile_type,
             generated_at=generated_at,
         )
         result = self._apply_request_context(result, scan_id, user_id, order_id, height_cm)
@@ -74,6 +77,7 @@ class BodyAIMeasurementService:
         self,
         scan_id: str,
         height_cm: float | None = None,
+        profile_type: str = ProfileType.UNSPECIFIED.value,
         user_id: str | None = None,
         order_id: str | None = None,
         demo_sample_id: str | None = None,
@@ -87,6 +91,7 @@ class BodyAIMeasurementService:
             self.predictions_csv,
             run_name=self.run_name,
             sample_id=sample_id,
+            profile_type=profile_type,
             generated_at=generated_at,
         )
         result = self._apply_request_context(result, scan_id, user_id, order_id, height_cm)
@@ -100,6 +105,7 @@ class BodyAIMeasurementService:
         order_id: str | None,
         height_cm: float | None,
     ) -> MeasurementResult:
+        normalized_profile_type = normalize_profile_type(result.profile_type)
         targets = [height_result_with_input(target, height_cm) if target.target == "height" else target for target in result.targets]
         caveats = [
             *result.caveats,
@@ -114,6 +120,7 @@ class BodyAIMeasurementService:
             result_id=f"body_ai_measurement_{scan_id}",
             sample_id=scan_id,
             targets=targets,
+            profile_type=normalized_profile_type,
             caveats=caveats,
         )
 
@@ -131,6 +138,7 @@ def run_body_ai_measurement(
     front_image_path: str | Path,
     side_image_path: str | Path,
     height_cm: float | None = None,
+    profile_type: str = ProfileType.UNSPECIFIED.value,
     user_id: str | None = None,
     order_id: str | None = None,
     predictions_csv: str | Path = DEFAULT_PHASE4D_PREDICTIONS,
@@ -153,6 +161,7 @@ def run_body_ai_measurement(
         front_image_path=front_image_path,
         side_image_path=side_image_path,
         height_cm=height_cm,
+        profile_type=profile_type,
         demo_sample_id=demo_sample_id,
         generated_at=generated_at,
     )
@@ -224,6 +233,7 @@ def export_sample_inference_result(
     side_image_path: str | Path = "data/synthetic/phase_3t/images/side/sample_000001_side.png",
     scan_id: str = "sample_000007",
     height_cm: float | None = 172.0,
+    profile_type: str = ProfileType.UNSPECIFIED.value,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     output_path = Path(output_dir)
@@ -233,6 +243,7 @@ def export_sample_inference_result(
         front_image_path=front_image_path,
         side_image_path=side_image_path,
         height_cm=height_cm,
+        profile_type=profile_type,
         generated_at=generated_at,
     )
     sample_json = output_path / SAMPLE_INFERENCE_RESULT_JSON
@@ -272,6 +283,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--front-image", required=True)
     parser.add_argument("--side-image", required=True)
     parser.add_argument("--height-cm", type=float)
+    parser.add_argument("--profile-type", default=ProfileType.UNSPECIFIED.value, choices=[profile.value for profile in ProfileType])
     parser.add_argument("--user-id")
     parser.add_argument("--order-id")
     parser.add_argument("--predictions", default=DEFAULT_PHASE4D_PREDICTIONS)
@@ -285,6 +297,7 @@ def main(argv: list[str] | None = None) -> int:
         front_image_path=args.front_image,
         side_image_path=args.side_image,
         height_cm=args.height_cm,
+        profile_type=args.profile_type,
         predictions_csv=args.predictions,
         run_name=args.run_name,
     )

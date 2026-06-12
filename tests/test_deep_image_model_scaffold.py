@@ -153,7 +153,7 @@ def test_model_output_shape_if_torch_available() -> None:
         "front = torch.zeros((2, 3, 32, 32), dtype=torch.float32); "
         "side = torch.zeros((2, 3, 32, 32), dtype=torch.float32); "
         "output = model(front, side); "
-        "assert tuple(output.shape) == (2, 11)"
+        f"assert tuple(output.shape) == (2, {len(TARGET_COLUMNS)})"
     )
 
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
@@ -172,7 +172,7 @@ def test_dual_branch_model_output_shape_if_torch_available() -> None:
         "front = torch.zeros((2, 3, 32, 32), dtype=torch.float32); "
         "side = torch.zeros((2, 3, 32, 32), dtype=torch.float32); "
         "output = model(front, side); "
-        "assert tuple(output.shape) == (2, 11)"
+        f"assert tuple(output.shape) == (2, {len(TARGET_COLUMNS)})"
     )
 
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)

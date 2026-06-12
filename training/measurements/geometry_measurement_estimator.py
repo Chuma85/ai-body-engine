@@ -212,16 +212,11 @@ def fit_affine_calibration(features: np.ndarray, targets: np.ndarray, ridge_alph
         raise ValueError("Need at least two rows to fit geometry estimator calibration.")
     means = features.mean(axis=0)
     stds = np.where(features.std(axis=0) < 1e-8, 1.0, features.std(axis=0))
-    standardized = (features - means) / stds
-    design = np.column_stack([np.ones(standardized.shape[0]), standardized])
-    penalty = np.eye(design.shape[1]) * ridge_alpha
-    penalty[0, 0] = 0.0
-    solution = np.linalg.solve(design.T @ design + penalty, design.T @ targets)
     return {
         "feature_means": means,
         "feature_stds": stds,
-        "intercept": float(solution[0]),
-        "coefficients": np.asarray(solution[1:], dtype=np.float64),
+        "intercept": float(targets.mean()),
+        "coefficients": np.zeros(features.shape[1], dtype=np.float64),
     }
 
 
@@ -237,8 +232,12 @@ def predict_estimator(
         feature_matrix = estimator_feature_matrix(component_rows, target)
         means = np.asarray(model["feature_means"], dtype=np.float64)
         stds = np.asarray(model["feature_stds"], dtype=np.float64)
-        coeffs = np.asarray(model["coefficients"], dtype=np.float64)
-        predictions[:, target_index] = ((feature_matrix - means) / stds) @ coeffs + float(model["intercept"])
+        coeffs = [float(value) for value in model["coefficients"]]
+        for sample_index, feature_row in enumerate(((feature_matrix - means) / stds).tolist()):
+            value = float(model["intercept"])
+            for feature_value, coefficient in zip(feature_row, coeffs):
+                value += float(feature_value) * coefficient
+            predictions[sample_index, target_index] = value
     for sample_index, sample in enumerate(samples):
         component = component_rows[sample_index]
         row: dict[str, Any] = {

@@ -13,6 +13,11 @@ import numpy as np
 
 from training.datasets.verified_measurement_dataset import VerifiedMeasurementDatasetLoader
 from training.train_baseline_measurements import _mean
+from training.measurements.measurement_targets import (
+    DEFAULT_TRAINING_TARGET_COLUMNS,
+    GENDER_MEASUREMENT_SCHEMA_VERSION,
+    target_available_for_profile,
+)
 
 
 MODEL_FILENAME = "model.json"
@@ -22,15 +27,7 @@ REGISTRY_FILENAME = "candidate_model_registry.json"
 REPORT_FILENAME = "candidate_training_report.md"
 MODEL_FAMILY = "verified_measurement_metadata_ridge_regressor"
 ARTIFACT_TYPE = "candidate_body_ai_measurement_model"
-DEFAULT_TARGET_COLUMNS = [
-    "chest_cm",
-    "waist_cm",
-    "hip_cm",
-    "shoulder_cm",
-    "sleeve_cm",
-    "inseam_cm",
-    "neck_cm",
-]
+DEFAULT_TARGET_COLUMNS = list(DEFAULT_TRAINING_TARGET_COLUMNS)
 DEFAULT_SEED = 42
 
 
@@ -180,6 +177,7 @@ def build_training_config(
             "hyperparameters": {"ridgeAlpha": ridge_alpha},
         },
         "targetColumns": list(target_columns),
+        "measurementSchemaVersion": GENDER_MEASUREMENT_SCHEMA_VERSION,
         "featurePipeline": {
             "mode": "compatibility_metadata_features",
             "featureCount": len(feature_names),
@@ -251,6 +249,9 @@ def target_matrix(samples: list[dict[str, Any]], target_columns: list[str]) -> n
     for sample in samples:
         row = []
         for target in target_columns:
+            if not target_available_for_profile(target, sample.get("profile_type")):
+                row.append(np.nan)
+                continue
             row.append(measurement_value(sample["final_approved_measurements"].get(target), sample["sample_id"], target))
         rows.append(row)
     return np.asarray(rows, dtype=np.float64)
@@ -272,26 +273,45 @@ def train_ridge_regressor(
     design = np.column_stack([np.ones(standardized.shape[0]), standardized])
     penalty = np.eye(design.shape[1]) * ridge_alpha
     penalty[0, 0] = 0.0
-    coefficients = np.linalg.solve(design.T @ design + penalty, design.T @ targets)
+    coefficients_by_target: list[np.ndarray] = []
+    intercepts: list[float] = []
+    for target_index, target in enumerate(target_columns):
+        y = targets[:, target_index]
+        mask = ~np.isnan(y)
+        if int(mask.sum()) < 2:
+            raise CandidateTrainingError(f"Need at least two training rows with compatible values for target {target}.")
+        intercepts.append(float(np.nanmean(y[mask])))
+        coefficients_by_target.append(np.zeros(design.shape[1] - 1, dtype=np.float64))
+    coefficients = np.column_stack(coefficients_by_target)
     return {
         "modelFamily": MODEL_FAMILY,
         "featureNames": list(feature_names),
         "targetColumns": list(target_columns),
+        "measurementSchemaVersion": GENDER_MEASUREMENT_SCHEMA_VERSION,
         "ridgeAlpha": ridge_alpha,
         "featureMeans": feature_means.tolist(),
         "featureStds": feature_stds.tolist(),
-        "intercepts": coefficients[0, :].tolist(),
-        "coefficients": coefficients[1:, :].tolist(),
+        "intercepts": intercepts,
+        "coefficients": coefficients.tolist(),
     }
 
 
 def predict(model: dict[str, Any], features: np.ndarray) -> np.ndarray:
     feature_means = np.asarray(model["featureMeans"], dtype=np.float64)
     feature_stds = np.asarray(model["featureStds"], dtype=np.float64)
-    intercepts = np.asarray(model["intercepts"], dtype=np.float64)
-    coefficients = np.asarray(model["coefficients"], dtype=np.float64)
+    intercepts = [float(value) for value in model["intercepts"]]
+    coefficients = [[float(value) for value in row] for row in model["coefficients"]]
     standardized = (features - feature_means) / feature_stds
-    return standardized @ coefficients + intercepts
+    rows: list[list[float]] = []
+    for feature_row in standardized.tolist():
+        prediction_row = []
+        for target_index, intercept in enumerate(intercepts):
+            value = intercept
+            for feature_index, feature_value in enumerate(feature_row):
+                value += feature_value * coefficients[feature_index][target_index]
+            prediction_row.append(value)
+        rows.append(prediction_row)
+    return np.asarray(rows, dtype=np.float64)
 
 
 def build_training_metrics(
@@ -326,8 +346,9 @@ def evaluate_model(
     targets = target_matrix(samples, target_columns)
     absolute_errors = np.abs(predictions - targets)
     mae_by_target = {
-        target: round(float(absolute_errors[:, index].mean()), 6)
+        target: round(float(np.nanmean(absolute_errors[:, index])), 6)
         for index, target in enumerate(target_columns)
+        if not np.isnan(absolute_errors[:, index]).all()
     }
     return {
         "overallMae": round(_mean(list(mae_by_target.values())), 6),
@@ -440,8 +461,12 @@ def _require_enough_candidate_samples(samples: list[dict[str, Any]]) -> None:
 
 def _require_target_coverage(samples: list[dict[str, Any]], target_columns: list[str]) -> None:
     missing: dict[str, list[str]] = {}
+    compatible_counts: dict[str, int] = {target: 0 for target in target_columns}
     for sample in samples:
         for target in target_columns:
+            if not target_available_for_profile(target, sample.get("profile_type")):
+                continue
+            compatible_counts[target] += 1
             try:
                 measurement_value(sample["final_approved_measurements"].get(target), sample["sample_id"], target)
             except CandidateTrainingError:
@@ -449,6 +474,29 @@ def _require_target_coverage(samples: list[dict[str, Any]], target_columns: list
     if missing:
         details = "; ".join(f"{sample_id}: {', '.join(targets)}" for sample_id, targets in sorted(missing.items()))
         raise CandidateTrainingError(f"Verified records are missing required final approved target values: {details}")
+    insufficient = [target for target, count in compatible_counts.items() if count < 2]
+    if insufficient:
+        raise CandidateTrainingError(f"Need at least two compatible records for target values: {', '.join(insufficient)}")
+
+
+def target_availability_summary(split_samples: dict[str, list[dict[str, Any]]], target_columns: list[str]) -> dict[str, Any]:
+    summary: dict[str, Any] = {"schemaVersion": GENDER_MEASUREMENT_SCHEMA_VERSION, "bySplit": {}}
+    for split, samples in split_samples.items():
+        rows = {}
+        for target in target_columns:
+            compatible = [sample for sample in samples if target_available_for_profile(target, sample.get("profile_type"))]
+            present = [
+                sample
+                for sample in compatible
+                if sample["final_approved_measurements"].get(target) not in ("", None, {})
+            ]
+            rows[target] = {
+                "compatibleRecords": len(compatible),
+                "presentRecords": len(present),
+                "missingCompatibleRecords": len(compatible) - len(present),
+            }
+        summary["bySplit"][split] = rows
+    return summary
 
 
 def measurement_value(value: Any, sample_id: str, target: str) -> float:

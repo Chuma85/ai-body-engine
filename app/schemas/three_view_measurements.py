@@ -5,6 +5,8 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from training.measurements.measurement_targets import GENDER_MEASUREMENT_SCHEMA_VERSION, ProfileType
+
 
 class SourceType(str, Enum):
     CAMERA = "camera"
@@ -35,6 +37,7 @@ class ThreeViewMeasurementRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     scan_session_id: str = Field(..., alias="scanSessionId", min_length=1)
+    profile_type: ProfileType = Field(default=ProfileType.UNSPECIFIED, alias="profileType")
     height_cm: float = Field(..., alias="heightCm", gt=0)
     weight_kg: float | None = Field(default=None, alias="weightKg", gt=0)
     request_payload_version: str = Field(default="phase_d_mobile_three_view_v1", alias="requestPayloadVersion")
@@ -131,9 +134,12 @@ class ConfidenceDetail(BaseModel):
 
 
 class ThreeViewMeasurementResponse(BaseModel):
+    schema_version: str = Field(default=GENDER_MEASUREMENT_SCHEMA_VERSION, alias="schemaVersion")
     scan_session_id: str = Field(..., alias="scanSessionId")
+    profile_type: ProfileType = Field(..., alias="profileType")
     measurement_result_id: str = Field(..., alias="measurementResultId")
     estimated_measurements: dict[str, float | None] = Field(..., alias="estimatedMeasurements")
+    target_availability: dict[str, Any] = Field(default_factory=dict, alias="targetAvailability")
     per_measurement_confidence: dict[str, ConfidenceDetail] = Field(..., alias="perMeasurementConfidence")
     overall_scan_confidence: ConfidenceDetail = Field(..., alias="overallScanConfidence")
     scan_quality_summary: ScanQualitySummary = Field(..., alias="scanQualitySummary")

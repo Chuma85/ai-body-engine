@@ -16,12 +16,20 @@ from synthetic.generator.render_silhouette import (
     render_front_silhouette,
     render_side_silhouette,
 )
+from training.measurements.measurement_targets import (
+    ALL_MEASUREMENT_TARGETS,
+    GENDER_MEASUREMENT_SCHEMA_VERSION,
+)
 
-GENERATOR_VERSION = "phase_2a_python_silhouette_v1"
+GENERATOR_VERSION = "phase_k2_gender_measurement_schema_v1"
 MINIMUM_SCAN_VIEWS = "front,side"
 ENHANCED_SCAN_VIEWS = "front,side,back"
 LABEL_COLUMNS = [
     "sample_id",
+    "profile_type",
+    "profileType",
+    "dataset_schema_version",
+    "measurement_schema_version",
     "front_image_path",
     "side_image_path",
     "back_image_path",
@@ -36,18 +44,14 @@ LABEL_COLUMNS = [
     "is_smoke_dataset",
     "is_training_candidate",
     "quality_tier",
-    "height_cm",
-    "weight_kg",
-    "chest_cm",
-    "waist_cm",
-    "hip_cm",
-    "shoulder_cm",
-    "inseam_cm",
-    "sleeve_cm",
-    "neck_cm",
-    "thigh_cm",
-    "calf_cm",
+    *ALL_MEASUREMENT_TARGETS,
     "body_shape",
+    "camera_angle_degrees",
+    "camera_distance_m",
+    "body_rotation_degrees",
+    "phone_framing_offset_x",
+    "phone_framing_offset_y",
+    "phone_framing_scale",
     "generator_version",
 ]
 
@@ -103,6 +107,8 @@ def _label_row(
     capture_views: list[str],
 ) -> dict[str, object]:
     row = profile.to_dict()
+    row["profileType"] = row["profile_type"]
+    row["measurement_schema_version"] = GENDER_MEASUREMENT_SCHEMA_VERSION
     row["front_image_path"] = front_path.as_posix()
     row["side_image_path"] = side_path.as_posix()
     row["back_image_path"] = back_path.as_posix() if back_path is not None else ""
@@ -118,7 +124,7 @@ def _label_row(
     row["is_training_candidate"] = False
     row["quality_tier"] = "smoke_only"
     row["generator_version"] = GENERATOR_VERSION
-    return {column: row[column] for column in LABEL_COLUMNS}
+    return {column: row.get(column, "") for column in LABEL_COLUMNS}
 
 
 def main() -> None:

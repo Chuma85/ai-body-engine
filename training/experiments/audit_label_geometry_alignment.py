@@ -364,9 +364,15 @@ def standardize_matrix(matrix: np.ndarray) -> np.ndarray:
 
 
 def pairwise_euclidean(matrix: np.ndarray) -> np.ndarray:
-    squared_norms = np.sum(matrix * matrix, axis=1, keepdims=True)
-    squared = squared_norms + squared_norms.T - 2.0 * (matrix @ matrix.T)
-    return np.sqrt(np.maximum(squared, 0.0))
+    rows = matrix.tolist()
+    distances: list[list[float]] = []
+    for left in rows:
+        distance_row = []
+        for right in rows:
+            squared = sum((float(a) - float(b)) ** 2 for a, b in zip(left, right))
+            distance_row.append(squared ** 0.5)
+        distances.append(distance_row)
+    return np.asarray(distances, dtype=np.float64)
 
 
 def write_outputs(

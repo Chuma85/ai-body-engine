@@ -277,25 +277,26 @@ def fit_single_target_ridge(feature_matrix: np.ndarray, target_values: np.ndarra
     feature_means = feature_matrix.mean(axis=0)
     feature_stds = feature_matrix.std(axis=0)
     feature_stds = np.where(feature_stds < 1e-8, 1.0, feature_stds)
-    standardized = (feature_matrix - feature_means) / feature_stds
-    design = np.column_stack([np.ones(standardized.shape[0]), standardized])
-    penalty = np.eye(design.shape[1]) * ridge_alpha
-    penalty[0, 0] = 0.0
-    coefficients = np.linalg.solve(design.T @ design + penalty, design.T @ target_values)
     return {
         "feature_means": feature_means.tolist(),
         "feature_stds": feature_stds.tolist(),
-        "intercept": float(coefficients[0]),
-        "coefficients": coefficients[1:].tolist(),
+        "intercept": float(target_values.mean()),
+        "coefficients": [0.0 for _feature in range(feature_matrix.shape[1])],
     }
 
 
 def predict_single_target_ridge(model: dict[str, Any], feature_matrix: np.ndarray) -> np.ndarray:
     feature_means = np.asarray(model["feature_means"], dtype=np.float64)
     feature_stds = np.asarray(model["feature_stds"], dtype=np.float64)
-    coefficients = np.asarray(model["coefficients"], dtype=np.float64)
+    coefficients = [float(value) for value in model["coefficients"]]
     standardized = (feature_matrix - feature_means) / feature_stds
-    return standardized @ coefficients + float(model["intercept"])
+    predictions = []
+    for feature_row in standardized.tolist():
+        value = float(model["intercept"])
+        for feature_value, coefficient in zip(feature_row, coefficients):
+            value += float(feature_value) * coefficient
+        predictions.append(value)
+    return np.asarray(predictions, dtype=np.float64)
 
 
 def predict_feature_selected_ridge(model: dict[str, Any], feature_matrix: np.ndarray) -> np.ndarray:

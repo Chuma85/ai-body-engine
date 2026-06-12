@@ -1,3 +1,17 @@
 {
-  "datasets": []
+  "datasets": [
+    {
+      "dataset_id": "gender_measurement_schema_v1",
+      "schema_version": "gender_measurement_schema_v1",
+      "status": "schema_registered",
+      "profile_types": [
+        "male",
+        "female",
+        "unisex",
+        "unspecified"
+      ],
+      "training_triggered": false,
+      "model_promotion_triggered": false
+    }
+  ]
 }

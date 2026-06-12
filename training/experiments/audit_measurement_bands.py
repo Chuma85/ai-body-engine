@@ -137,9 +137,19 @@ def build_band_correlation_rows(
 
 
 def pearson_correlation(values: np.ndarray, target_values: np.ndarray) -> float:
-    if float(values.std()) < 1e-12 or float(target_values.std()) < 1e-12:
+    left = [float(value) for value in values.tolist()]
+    right = [float(value) for value in target_values.tolist()]
+    if len(left) != len(right) or len(left) < 2:
         return 0.0
-    return float(np.corrcoef(values, target_values)[0, 1])
+    left_mean = sum(left) / len(left)
+    right_mean = sum(right) / len(right)
+    left_centered = [value - left_mean for value in left]
+    right_centered = [value - right_mean for value in right]
+    left_sum = sum(value * value for value in left_centered)
+    right_sum = sum(value * value for value in right_centered)
+    if left_sum < 1e-12 or right_sum < 1e-12:
+        return 0.0
+    return sum(a * b for a, b in zip(left_centered, right_centered)) / ((left_sum * right_sum) ** 0.5)
 
 
 def band_feature_role(feature_name: str) -> str:

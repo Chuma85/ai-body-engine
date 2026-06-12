@@ -4,20 +4,9 @@ from pathlib import Path
 from typing import Any
 
 from synthetic.generator.generate_dataset import LABEL_COLUMNS
+from training.measurements.measurement_targets import ALL_MEASUREMENT_TARGETS, profile_type_from_payload, target_available_for_profile
 
-MEASUREMENT_COLUMNS = [
-    "height_cm",
-    "weight_kg",
-    "chest_cm",
-    "waist_cm",
-    "hip_cm",
-    "shoulder_cm",
-    "inseam_cm",
-    "sleeve_cm",
-    "neck_cm",
-    "thigh_cm",
-    "calf_cm",
-]
+MEASUREMENT_COLUMNS = list(ALL_MEASUREMENT_TARGETS)
 
 
 def validate_dataset(labels_csv_path: str) -> dict[str, Any]:
@@ -60,8 +49,11 @@ def validate_dataset(labels_csv_path: str) -> dict[str, Any]:
                 result["missing_back_files"].append(str(back_image_path))
                 missing_files.append(str(back_image_path))
 
+        profile_type = profile_type_from_payload(row)
         for measurement_column in MEASUREMENT_COLUMNS:
-            if row[measurement_column] in ("", None):
+            if not target_available_for_profile(measurement_column, profile_type):
+                continue
+            if row.get(measurement_column) in ("", None) and not _has_legacy_measurement_fallback(row, measurement_column):
                 has_missing_measurements = True
 
     result["missing_files"] = missing_files
@@ -75,6 +67,22 @@ def validate_dataset(labels_csv_path: str) -> dict[str, Any]:
 
 def _truthy(value: object) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _has_legacy_measurement_fallback(row: dict[str, str], measurement_column: str) -> bool:
+    fallback_sources = {
+        "shoulder_width_cm": ("shoulder_cm",),
+        "abdomen_cm": ("waist_cm",),
+        "stomach_cm": ("waist_cm",),
+        "outseam_cm": ("inseam_cm",),
+        "sleeve_shoulder_to_wrist_cm": ("sleeve_cm",),
+        "bicep_cm": ("chest_cm",),
+        "forearm_cm": ("chest_cm",),
+        "wrist_cm": ("neck_cm",),
+        "knee_cm": ("thigh_cm",),
+        "ankle_cm": ("calf_cm",),
+    }
+    return any(row.get(source) not in ("", None) for source in fallback_sources.get(measurement_column, ()))
 
 
 def main() -> None:

@@ -7,9 +7,18 @@ import sys
 from typing import Any, Iterator
 
 from synthetic.validate_synthetic_dataset import _read_label_rows
+from training.measurements.measurement_targets import (
+    ALL_MEASUREMENT_TARGETS,
+    GENDER_MEASUREMENT_SCHEMA_VERSION,
+    ProfileType,
+    profile_type_from_payload,
+    target_available_for_profile,
+    targets_for_profile,
+)
 
 VALID_SPLITS = {"train", "val", "test", "all"}
-MEASUREMENT_COLUMNS = [
+ALL_SYNTHETIC_MEASUREMENT_COLUMNS = list(ALL_MEASUREMENT_TARGETS)
+LEGACY_MEASUREMENT_ORDER = [
     "height_cm",
     "weight_kg",
     "chest_cm",
@@ -21,6 +30,11 @@ MEASUREMENT_COLUMNS = [
     "neck_cm",
     "thigh_cm",
     "calf_cm",
+]
+_SHARED_MEASUREMENT_COLUMNS = list(targets_for_profile(ProfileType.UNSPECIFIED.value))
+MEASUREMENT_COLUMNS = [
+    *[target for target in LEGACY_MEASUREMENT_ORDER if target in _SHARED_MEASUREMENT_COLUMNS],
+    *[target for target in _SHARED_MEASUREMENT_COLUMNS if target not in LEGACY_MEASUREMENT_ORDER],
 ]
 
 
@@ -69,6 +83,10 @@ class SyntheticBodyDataset:
 
         sample = {
             "sample_id": sample_id,
+            "profile_type": profile_type_from_payload(label_row),
+            "measurement_schema_version": label_row.get("measurement_schema_version")
+            or label_row.get("dataset_schema_version")
+            or GENDER_MEASUREMENT_SCHEMA_VERSION,
             "front_image_path": front_image_path,
             "side_image_path": side_image_path,
             "back_image_path": back_image_path,
@@ -82,6 +100,7 @@ class SyntheticBodyDataset:
             "label_row_index": int(manifest_row["label_row_index"]),
             "labels": label_row,
             "measurements": _parse_measurements(label_row),
+            "target_availability": _target_availability(label_row),
             "body_shape": label_row.get("body_shape", ""),
             "generator_version": label_row.get("generator_version", ""),
         }
@@ -153,11 +172,45 @@ class SyntheticBodyDataset:
 
 def _parse_measurements(label_row: dict[str, str]) -> dict[str, float]:
     measurements: dict[str, float] = {}
-    for column in MEASUREMENT_COLUMNS:
+    profile_type = profile_type_from_payload(label_row)
+    for column in ALL_SYNTHETIC_MEASUREMENT_COLUMNS:
+        if not target_available_for_profile(column, profile_type):
+            continue
         value = label_row.get(column)
         if value not in ("", None):
             measurements[column] = float(value)
+    _apply_legacy_measurement_fallbacks(measurements)
     return measurements
+
+
+def _apply_legacy_measurement_fallbacks(measurements: dict[str, float]) -> None:
+    if "shoulder_width_cm" not in measurements and "shoulder_cm" in measurements:
+        measurements["shoulder_width_cm"] = measurements["shoulder_cm"]
+    if "abdomen_cm" not in measurements and "waist_cm" in measurements:
+        measurements["abdomen_cm"] = round(measurements["waist_cm"] * 1.06, 4)
+    if "stomach_cm" not in measurements and "waist_cm" in measurements:
+        measurements["stomach_cm"] = round(measurements["waist_cm"] * 1.08, 4)
+    if "outseam_cm" not in measurements and "inseam_cm" in measurements:
+        measurements["outseam_cm"] = round(measurements["inseam_cm"] + 25.0, 4)
+    if "sleeve_shoulder_to_wrist_cm" not in measurements and "sleeve_cm" in measurements:
+        measurements["sleeve_shoulder_to_wrist_cm"] = measurements["sleeve_cm"]
+    if "bicep_cm" not in measurements and "chest_cm" in measurements:
+        measurements["bicep_cm"] = round(measurements["chest_cm"] * 0.32, 4)
+    if "forearm_cm" not in measurements and "bicep_cm" in measurements:
+        measurements["forearm_cm"] = round(measurements["bicep_cm"] * 0.78, 4)
+    if "wrist_cm" not in measurements and "neck_cm" in measurements:
+        measurements["wrist_cm"] = round(measurements["neck_cm"] * 0.55, 4)
+    if "knee_cm" not in measurements and "thigh_cm" in measurements:
+        measurements["knee_cm"] = round(measurements["thigh_cm"] * 0.72, 4)
+    if "ankle_cm" not in measurements and "calf_cm" in measurements:
+        measurements["ankle_cm"] = round(measurements["calf_cm"] * 0.65, 4)
+
+
+def _target_availability(label_row: dict[str, str]) -> dict[str, list[str]]:
+    profile_type = profile_type_from_payload(label_row)
+    available = [column for column in ALL_SYNTHETIC_MEASUREMENT_COLUMNS if target_available_for_profile(column, profile_type)]
+    unavailable = [column for column in ALL_SYNTHETIC_MEASUREMENT_COLUMNS if column not in available]
+    return {"available": available, "unavailable": unavailable}
 
 
 def _truthy(value: object) -> bool:

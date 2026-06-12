@@ -19,6 +19,7 @@ from app.schemas.three_view_measurements import (
 )
 from training.measurements.body_ai_inference import BodyAIMeasurementService
 from training.measurements.measurement_confidence import DEFAULT_PHASE4D_PREDICTIONS, DEFAULT_RUN_NAME
+from training.measurements.measurement_targets import target_availability_payload
 
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ class ThreeViewMeasurementService:
         result = self.inference_service.predict_from_normalized_references(
             scan_id=request.scan_session_id,
             height_cm=request.height_cm,
+            profile_type=request.profile_type.value,
             user_id=request.user_id or request.customer_id,
             order_id=request.order_id,
         )
@@ -116,8 +118,10 @@ class ThreeViewMeasurementService:
 
         return ThreeViewMeasurementResponse(
             scanSessionId=request.scan_session_id,
+            profileType=request.profile_type,
             measurementResultId=raw_payload["result_id"],
             estimatedMeasurements=estimated_measurements,
+            targetAvailability=target_availability_payload(request.profile_type.value),
             perMeasurementConfidence=per_measurement_confidence,
             overallScanConfidence=overall_confidence,
             scanQualitySummary=scan_quality_summary,
@@ -146,6 +150,7 @@ class ThreeViewMeasurementService:
     ) -> None:
         self.normalized_scan_packages[request.scan_session_id] = {
             "requestPayloadVersion": request.request_payload_version,
+            "profileType": request.profile_type.value,
             "heightCm": request.height_cm,
             "weightKg": request.weight_kg,
             "userId": request.user_id,

@@ -403,7 +403,7 @@ def build_confidence_calibration_report(
     absolute_errors = np.abs(predictions - targets)
     buckets: dict[str, list[float]] = {bucket: [] for bucket in CONFIDENCE_BUCKETS}
     for row_index, sample in enumerate(samples):
-        buckets.setdefault(confidence_tier(sample), []).append(float(absolute_errors[row_index, :].mean()))
+        buckets.setdefault(confidence_tier(sample), []).append(float(np.nanmean(absolute_errors[row_index, :])))
     bucket_report = {
         tier: {
             "count": len(errors),

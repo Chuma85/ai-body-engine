@@ -298,6 +298,7 @@ class MultimodalVerifiedDataset:
         return {
             "sampleId": sample["sample_id"],
             "datasetVersion": sample["dataset_version"],
+            "profileType": sample["profile_type"],
             "frontImage": images["front"],
             "sideImage": images["side"],
             "backImage": images["back"],
@@ -307,6 +308,7 @@ class MultimodalVerifiedDataset:
             "confidenceMetadata": sample["confidence_metadata"],
             "eligibilityMetadata": sample["eligibility_metadata"],
             "finalApprovedMeasurements": sample["final_approved_measurements"],
+            "targetAvailability": sample["target_availability"],
             "lineage": sample["lineage"],
             "correctionDeltas": sample["correction_deltas"],
             "rawRecord": sample["raw_record"],

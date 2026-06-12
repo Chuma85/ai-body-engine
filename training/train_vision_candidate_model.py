@@ -19,6 +19,7 @@ from training.datasets.multimodal_verified_dataset import (
 )
 from training.train_baseline_measurements import _mean
 from training.train_candidate_model import DEFAULT_SEED, DEFAULT_TARGET_COLUMNS, measurement_value, split_indices_for_count
+from training.measurements.measurement_targets import GENDER_MEASUREMENT_SCHEMA_VERSION, target_available_for_profile
 
 
 VISION_MODEL_JSON = "vision_model.json"
@@ -135,8 +136,9 @@ def train_vision_candidate_model(
     split_samples = {split: [samples[index] for index in indices] for split, indices in split_indices.items()}
     tensors = build_tensor_batches(split_samples, metadata_feature_names, targets)
     train_targets = tensors["train"]["targets"]
-    target_mean = train_targets.mean(dim=0)
-    target_std = train_targets.std(dim=0)
+    train_targets_np = train_targets.numpy()
+    target_mean = torch.as_tensor(np.nanmean(train_targets_np, axis=0), dtype=torch.float32)
+    target_std = torch.as_tensor(np.nanstd(train_targets_np, axis=0), dtype=torch.float32)
     target_std = torch.where(target_std < 1e-6, torch.ones_like(target_std), target_std)
 
     selected_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
@@ -155,7 +157,8 @@ def train_vision_candidate_model(
         optimizer.zero_grad()
         predictions = model(batch["front"], batch["side"], batch["back"], batch["metadata"])
         normalized_targets = (batch["targets"] - target_mean.to(selected_device)) / target_std.to(selected_device)
-        loss = loss_fn(predictions, normalized_targets)
+        mask = ~torch.isnan(normalized_targets)
+        loss = loss_fn(predictions[mask], normalized_targets[mask])
         loss.backward()
         optimizer.step()
 
@@ -190,6 +193,7 @@ def train_vision_candidate_model(
         "trainingTimestamp": timestamp,
         "recordCount": len(samples),
         "targetColumns": targets,
+        "measurementSchemaVersion": GENDER_MEASUREMENT_SCHEMA_VERSION,
         "architecture": architecture_summary(model, len(metadata_feature_names), len(targets), branch_dim, fusion_dim),
         "imageUsage": {
             "pixelsConsumed": True,
@@ -279,8 +283,12 @@ def require_image_tensors(samples: list[dict[str, Any]]) -> None:
 
 def require_target_coverage(samples: list[dict[str, Any]], target_columns: list[str]) -> None:
     missing: dict[str, list[str]] = {}
+    compatible_counts: dict[str, int] = {target: 0 for target in target_columns}
     for sample in samples:
         for target in target_columns:
+            if not target_available_for_profile(target, sample.get("profileType")):
+                continue
+            compatible_counts[target] += 1
             try:
                 target_value(sample, target)
             except VisionCandidateTrainingError:
@@ -288,9 +296,14 @@ def require_target_coverage(samples: list[dict[str, Any]], target_columns: list[
     if missing:
         details = "; ".join(f"{sample_id}: {', '.join(targets)}" for sample_id, targets in sorted(missing.items()))
         raise VisionCandidateTrainingError(f"Multimodal records are missing final approved target values: {details}")
+    insufficient = [target for target, count in compatible_counts.items() if count < 2]
+    if insufficient:
+        raise VisionCandidateTrainingError(f"Need at least two compatible records for target values: {', '.join(insufficient)}")
 
 
 def target_value(sample: dict[str, Any], target: str) -> float:
+    if not target_available_for_profile(target, sample.get("profileType")):
+        return float("nan")
     try:
         return measurement_value(sample["finalApprovedMeasurements"].get(target), sample["sampleId"], target)
     except Exception as error:
@@ -441,8 +454,9 @@ def evaluate_split(
         targets = batch["targets"].cpu()
         absolute_errors = torch.abs(predictions - targets).numpy()
     mae_by_target = {
-        target: round(float(absolute_errors[:, index].mean()), 6)
+        target: round(float(np.nanmean(absolute_errors[:, index])), 6)
         for index, target in enumerate(target_columns)
+        if not np.isnan(absolute_errors[:, index]).all()
     }
     return {
         "overallMae": round(_mean(list(mae_by_target.values())), 6),
@@ -506,6 +520,7 @@ def build_training_config(
             "finalApprovedMeasurementsAsTargets": True,
         },
         "targetColumns": target_columns,
+        "measurementSchemaVersion": GENDER_MEASUREMENT_SCHEMA_VERSION,
         "metadataFeatureNames": metadata_feature_names,
         "pixelsConsumed": True,
         "candidateOnly": True,

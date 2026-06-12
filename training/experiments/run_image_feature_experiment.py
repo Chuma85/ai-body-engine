@@ -244,10 +244,19 @@ def predict_image_feature_model(model: dict[str, Any], feature_matrix: np.ndarra
     if model_family == "ridge":
         feature_means = np.asarray(model["feature_means"], dtype=np.float64)
         feature_stds = np.asarray(model["feature_stds"], dtype=np.float64)
-        intercepts = np.asarray(model["intercepts"], dtype=np.float64)
-        coefficients = np.asarray(model["coefficients"], dtype=np.float64)
+        intercepts = [float(value) for value in model["intercepts"]]
+        coefficients = [[float(value) for value in row] for row in model["coefficients"]]
         standardized = (feature_matrix - feature_means) / feature_stds
-        return standardized @ coefficients + intercepts
+        rows: list[list[float]] = []
+        for feature_row in standardized.tolist():
+            prediction_row = []
+            for target_index, intercept in enumerate(intercepts):
+                value = intercept
+                for feature_index, feature_value in enumerate(feature_row):
+                    value += float(feature_value) * coefficients[feature_index][target_index]
+                prediction_row.append(value)
+            rows.append(prediction_row)
+        return np.asarray(rows, dtype=np.float64)
     if model_family == "knn":
         return predict_knn_regressor(model, feature_matrix)
     raise ValueError(f"Unknown trained model family '{model_family}'.")
@@ -261,8 +270,15 @@ def predict_knn_regressor(model: dict[str, Any], feature_matrix: np.ndarray) -> 
     k = int(model["hyperparameters"]["k"])
     standardized = (feature_matrix - feature_means) / feature_stds
     predictions = []
-    for row in standardized:
-        distances = np.linalg.norm(train_features - row, axis=1)
+    train_feature_rows = train_features.tolist()
+    for row in standardized.tolist():
+        distances = np.asarray(
+            [
+                sum((float(a) - float(b)) ** 2 for a, b in zip(train_row, row)) ** 0.5
+                for train_row in train_feature_rows
+            ],
+            dtype=np.float64,
+        )
         nearest_indices = np.argsort(distances)[:k]
         predictions.append(train_targets[nearest_indices].mean(axis=0))
     return np.asarray(predictions, dtype=np.float64)

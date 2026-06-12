@@ -485,11 +485,19 @@ def summarize_clean_ambiguous_ranges(
 
 
 def pearson_correlation(left: np.ndarray, right: np.ndarray) -> float:
-    if left.size < 2 or right.size < 2:
+    left_values = [float(value) for value in left.tolist()]
+    right_values = [float(value) for value in right.tolist()]
+    if len(left_values) != len(right_values) or len(left_values) < 2:
         return 0.0
-    if float(np.std(left)) < 1e-12 or float(np.std(right)) < 1e-12:
+    left_mean = sum(left_values) / len(left_values)
+    right_mean = sum(right_values) / len(right_values)
+    left_centered = [value - left_mean for value in left_values]
+    right_centered = [value - right_mean for value in right_values]
+    left_sum = sum(value * value for value in left_centered)
+    right_sum = sum(value * value for value in right_centered)
+    if left_sum < 1e-12 or right_sum < 1e-12:
         return 0.0
-    return float(np.corrcoef(left, right)[0, 1])
+    return sum(a * b for a, b in zip(left_centered, right_centered)) / ((left_sum * right_sum) ** 0.5)
 
 
 def range_stats(values: np.ndarray) -> dict[str, float]:

@@ -321,10 +321,19 @@ def predict_selected_model(trained: dict[str, Any], feature_matrix: np.ndarray) 
         model = trained["model"]
         feature_means = np.asarray(model["feature_means"], dtype=np.float64)
         feature_stds = np.asarray(model["feature_stds"], dtype=np.float64)
-        intercepts = np.asarray(model["intercepts"], dtype=np.float64)
-        coefficients = np.asarray(model["coefficients"], dtype=np.float64)
+        intercepts = [float(value) for value in model["intercepts"]]
+        coefficients = [[float(value) for value in row] for row in model["coefficients"]]
         standardized = (feature_matrix - feature_means) / feature_stds
-        return standardized @ coefficients + intercepts
+        rows: list[list[float]] = []
+        for feature_row in standardized.tolist():
+            prediction_row = []
+            for target_index, intercept in enumerate(intercepts):
+                value = intercept
+                for feature_index, feature_value in enumerate(feature_row):
+                    value += feature_value * coefficients[feature_index][target_index]
+                prediction_row.append(value)
+            rows.append(prediction_row)
+        return np.asarray(rows, dtype=np.float64)
     features = feature_matrix
     if trained.get("use_standardized"):
         features = (feature_matrix - trained["feature_means"]) / trained["feature_stds"]

@@ -7,8 +7,9 @@ import sys
 from typing import Any
 
 from training.datasets.synthetic_body_dataset import MEASUREMENT_COLUMNS, SyntheticBodyDataset
+from training.measurements.measurement_targets import ProfileType, targets_for_profile
 
-TARGET_COLUMNS = [*MEASUREMENT_COLUMNS]
+TARGET_COLUMNS = [target for target in MEASUREMENT_COLUMNS if target in targets_for_profile(ProfileType.UNSPECIFIED.value)]
 MODEL_FILENAME = "model.json"
 METRICS_FILENAME = "metrics.json"
 

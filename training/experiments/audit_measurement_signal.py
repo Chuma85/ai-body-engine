@@ -152,11 +152,19 @@ def build_correlation_rows(
 
 
 def pearson_correlation(values: np.ndarray, target_values: np.ndarray) -> float:
-    value_std = float(values.std())
-    target_std = float(target_values.std())
-    if value_std < 1e-12 or target_std < 1e-12:
+    left = [float(value) for value in values.tolist()]
+    right = [float(value) for value in target_values.tolist()]
+    if len(left) != len(right) or len(left) < 2:
         return 0.0
-    return float(np.corrcoef(values, target_values)[0, 1])
+    left_mean = sum(left) / len(left)
+    right_mean = sum(right) / len(right)
+    left_centered = [value - left_mean for value in left]
+    right_centered = [value - right_mean for value in right]
+    left_sum = sum(value * value for value in left_centered)
+    right_sum = sum(value * value for value in right_centered)
+    if left_sum < 1e-12 or right_sum < 1e-12:
+        return 0.0
+    return sum(a * b for a, b in zip(left_centered, right_centered)) / ((left_sum * right_sum) ** 0.5)
 
 
 def feature_view_group(feature_name: str) -> str:
@@ -258,9 +266,15 @@ def standardize_matrix(matrix: np.ndarray) -> np.ndarray:
 
 
 def pairwise_euclidean(matrix: np.ndarray) -> np.ndarray:
-    squared_norms = np.sum(matrix * matrix, axis=1, keepdims=True)
-    squared = squared_norms + squared_norms.T - 2.0 * (matrix @ matrix.T)
-    return np.sqrt(np.maximum(squared, 0.0))
+    rows = matrix.tolist()
+    distances: list[list[float]] = []
+    for left in rows:
+        distance_row = []
+        for right in rows:
+            squared = sum((float(a) - float(b)) ** 2 for a, b in zip(left, right))
+            distance_row.append(squared ** 0.5)
+        distances.append(distance_row)
+    return np.asarray(distances, dtype=np.float64)
 
 
 def analyze_prediction_errors(prediction_csv: str | Path) -> tuple[list[dict[str, Any]], list[str], dict[str, list[str]]]:

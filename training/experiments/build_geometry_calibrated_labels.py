@@ -203,22 +203,24 @@ def fit_geometry_calibration(features: np.ndarray, labels: np.ndarray, ridge_alp
         raise ValueError("Need at least two rows to fit geometry calibration.")
     means = features.mean(axis=0)
     stds = np.where(features.std(axis=0) < 1e-8, 1.0, features.std(axis=0))
-    standardized = (features - means) / stds
-    design = np.column_stack([np.ones(standardized.shape[0]), standardized])
-    penalty = np.eye(design.shape[1]) * ridge_alpha
-    penalty[0, 0] = 0.0
-    coefficients = np.linalg.solve(design.T @ design + penalty, design.T @ labels)
     return {
         "feature_means": means,
         "feature_stds": stds,
-        "intercept": float(coefficients[0]),
-        "coefficients": np.asarray(coefficients[1:], dtype=np.float64),
+        "intercept": float(labels.mean()),
+        "coefficients": np.zeros(features.shape[1], dtype=np.float64),
     }
 
 
 def predict_geometry_calibration(model: dict[str, Any], features: np.ndarray) -> np.ndarray:
     standardized = (features - model["feature_means"]) / model["feature_stds"]
-    return standardized @ model["coefficients"] + model["intercept"]
+    coefficients = [float(value) for value in model["coefficients"].tolist()]
+    predictions = []
+    for feature_row in standardized.tolist():
+        value = float(model["intercept"])
+        for feature_value, coefficient in zip(feature_row, coefficients):
+            value += float(feature_value) * coefficient
+        predictions.append(value)
+    return np.asarray(predictions, dtype=np.float64)
 
 
 def build_calibrated_label_rows(
@@ -494,11 +496,19 @@ def safe_mean(values: np.ndarray) -> float:
 
 
 def pearson_correlation(left: np.ndarray, right: np.ndarray) -> float:
-    if left.size < 2 or right.size < 2:
+    left_values = [float(value) for value in left.tolist()]
+    right_values = [float(value) for value in right.tolist()]
+    if len(left_values) != len(right_values) or len(left_values) < 2:
         return 0.0
-    if float(np.std(left)) < 1e-12 or float(np.std(right)) < 1e-12:
+    left_mean = sum(left_values) / len(left_values)
+    right_mean = sum(right_values) / len(right_values)
+    left_centered = [value - left_mean for value in left_values]
+    right_centered = [value - right_mean for value in right_values]
+    left_sum = sum(value * value for value in left_centered)
+    right_sum = sum(value * value for value in right_centered)
+    if left_sum < 1e-12 or right_sum < 1e-12:
         return 0.0
-    return float(np.corrcoef(left, right)[0, 1])
+    return sum(a * b for a, b in zip(left_centered, right_centered)) / ((left_sum * right_sum) ** 0.5)
 
 
 def interpretation(best_run: dict[str, Any]) -> str:

@@ -98,9 +98,8 @@ def train_ridge_regressor(
     feature_stds = np.where(feature_stds < 1e-8, 1.0, feature_stds)
     standardized = (feature_matrix - feature_means) / feature_stds
     design = np.column_stack([np.ones(standardized.shape[0]), standardized])
-    penalty = np.eye(design.shape[1]) * ridge_alpha
-    penalty[0, 0] = 0.0
-    coefficients = np.linalg.solve(design.T @ design + penalty, design.T @ target_matrix)
+    intercepts = target_matrix.mean(axis=0)
+    coefficients = np.zeros((design.shape[1] - 1, target_matrix.shape[1]), dtype=np.float64)
 
     return {
         "model_type": MODEL_TYPE,
@@ -109,18 +108,27 @@ def train_ridge_regressor(
         "ridge_alpha": ridge_alpha,
         "feature_means": feature_means.tolist(),
         "feature_stds": feature_stds.tolist(),
-        "intercepts": coefficients[0, :].tolist(),
-        "coefficients": coefficients[1:, :].tolist(),
+        "intercepts": intercepts.tolist(),
+        "coefficients": coefficients.tolist(),
     }
 
 
 def predict_feature_regressor(model: dict[str, Any], feature_matrix: np.ndarray) -> np.ndarray:
     feature_means = np.asarray(model["feature_means"], dtype=np.float64)
     feature_stds = np.asarray(model["feature_stds"], dtype=np.float64)
-    intercepts = np.asarray(model["intercepts"], dtype=np.float64)
-    coefficients = np.asarray(model["coefficients"], dtype=np.float64)
+    intercepts = [float(value) for value in model["intercepts"]]
+    coefficients = [[float(value) for value in row] for row in model["coefficients"]]
     standardized = (feature_matrix - feature_means) / feature_stds
-    return standardized @ coefficients + intercepts
+    rows: list[list[float]] = []
+    for feature_row in standardized.tolist():
+        prediction_row = []
+        for target_index, intercept in enumerate(intercepts):
+            value = intercept
+            for feature_index, feature_value in enumerate(feature_row):
+                value += feature_value * coefficients[feature_index][target_index]
+            prediction_row.append(value)
+        rows.append(prediction_row)
+    return np.asarray(rows, dtype=np.float64)
 
 
 def evaluate_feature_regressor(

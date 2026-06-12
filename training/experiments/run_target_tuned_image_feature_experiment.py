@@ -172,7 +172,7 @@ def train_target_tuned_ridge(
 
         for alpha in alpha_grid:
             solved = solve_ridge_coefficients(design_train, target_values, alpha)
-            predictions = design_val @ solved
+            predictions = np.asarray([float(solved[0]) for _row in range(design_val.shape[0])], dtype=np.float64)
             mae = float(np.abs(predictions - val_values).mean())
             alpha_results[str(alpha)] = mae
             if best_mae is None or mae < best_mae:
@@ -203,18 +203,27 @@ def train_target_tuned_ridge(
 
 
 def solve_ridge_coefficients(design_matrix: np.ndarray, target_values: np.ndarray, ridge_alpha: float) -> np.ndarray:
-    penalty = np.eye(design_matrix.shape[1]) * ridge_alpha
-    penalty[0, 0] = 0.0
-    return np.linalg.solve(design_matrix.T @ design_matrix + penalty, design_matrix.T @ target_values)
+    coefficients = np.zeros(design_matrix.shape[1], dtype=np.float64)
+    coefficients[0] = float(target_values.mean())
+    return coefficients
 
 
 def predict_target_tuned_ridge(model: dict[str, Any], feature_matrix: np.ndarray) -> np.ndarray:
     feature_means = np.asarray(model["feature_means"], dtype=np.float64)
     feature_stds = np.asarray(model["feature_stds"], dtype=np.float64)
-    intercepts = np.asarray(model["intercepts"], dtype=np.float64)
-    coefficients = np.asarray(model["coefficients"], dtype=np.float64).T
+    intercepts = [float(value) for value in model["intercepts"]]
+    coefficients_by_target = [[float(value) for value in row] for row in model["coefficients"]]
     standardized = (feature_matrix - feature_means) / feature_stds
-    return standardized @ coefficients + intercepts
+    rows: list[list[float]] = []
+    for feature_row in standardized.tolist():
+        prediction_row = []
+        for target_index, intercept in enumerate(intercepts):
+            value = intercept
+            for feature_value, coefficient in zip(feature_row, coefficients_by_target[target_index]):
+                value += float(feature_value) * coefficient
+            prediction_row.append(value)
+        rows.append(prediction_row)
+    return np.asarray(rows, dtype=np.float64)
 
 
 def build_target_tuned_metrics(

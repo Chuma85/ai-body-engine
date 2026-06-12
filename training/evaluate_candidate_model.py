@@ -19,6 +19,7 @@ from training.train_candidate_model import (
     split_indices_for_count,
     target_matrix,
 )
+from training.measurements.measurement_targets import GENDER_MEASUREMENT_SCHEMA_VERSION, target_available_for_profile
 
 
 EVALUATION_METRICS_FILENAME = "candidate_evaluation_metrics.json"
@@ -101,6 +102,7 @@ def evaluate_candidate_model(
         "candidateModelPath": str(model_path),
         "candidateModelVersion": model.get("modelVersion"),
         "targetColumns": target_columns,
+        "measurementSchemaVersion": GENDER_MEASUREMENT_SCHEMA_VERSION,
         "baselineEstimator": baseline_model["modelFamily"],
         "baselineMetrics": baseline_metrics,
         "candidateMetrics": candidate_metrics,
@@ -155,7 +157,13 @@ def train_baseline_mean_estimator(samples: list[dict[str, Any]], target_columns:
         raise CandidateEvaluationError("Cannot build baseline estimator without training samples.")
     means: dict[str, float] = {}
     for target in target_columns:
-        values = [measurement_value(sample["final_approved_measurements"].get(target), sample["sample_id"], target) for sample in samples]
+        values = [
+            measurement_value(sample["final_approved_measurements"].get(target), sample["sample_id"], target)
+            for sample in samples
+            if target_available_for_profile(target, sample.get("profile_type"))
+        ]
+        if not values:
+            raise CandidateEvaluationError(f"Cannot build baseline estimator without compatible training values for {target}.")
         means[target] = _mean(values)
     return {
         "modelFamily": "verified_train_split_mean_baseline",
@@ -188,8 +196,9 @@ def baseline_predictions(baseline_model: dict[str, Any], count: int, target_colu
 def evaluate_predictions(predictions: np.ndarray, targets: np.ndarray, target_columns: list[str]) -> dict[str, Any]:
     absolute_errors = np.abs(predictions - targets)
     mae_by_target = {
-        target: round(float(absolute_errors[:, index].mean()), 6)
+        target: round(float(np.nanmean(absolute_errors[:, index])), 6)
         for index, target in enumerate(target_columns)
+        if not np.isnan(absolute_errors[:, index]).all()
     }
     return {
         "overallMae": round(_mean(list(mae_by_target.values())), 6),
@@ -211,6 +220,8 @@ def compare_metrics(
     per_target: dict[str, Any] = {}
     regressions: list[dict[str, Any]] = []
     for target in target_columns:
+        if target not in baseline["maeByTarget"] or target not in candidate["maeByTarget"]:
+            continue
         baseline_mae = float(baseline["maeByTarget"][target])
         candidate_mae = float(candidate["maeByTarget"][target])
         improvement = baseline_mae - candidate_mae
@@ -249,7 +260,7 @@ def confidence_calibration_analysis(
     for row_index, sample in enumerate(samples):
         tier = confidence_tier(sample)
         buckets.setdefault(tier, [])
-        buckets[tier].append(float(absolute_errors[row_index, :].mean()))
+        buckets[tier].append(float(np.nanmean(absolute_errors[row_index, :])))
     return {
         tier: {
             "count": len(errors),
@@ -284,10 +295,11 @@ def audit_leakage(
         values = feature_values[:, feature_index]
         for target_index, target in enumerate(target_columns):
             target_values = targets[:, target_index]
-            if values.shape[0] and np.allclose(values, target_values, atol=1e-9, rtol=0.0):
+            valid_mask = ~np.isnan(target_values)
+            if values.shape[0] and valid_mask.any() and np.allclose(values[valid_mask], target_values[valid_mask], atol=1e-9, rtol=0.0):
                 findings.append(high_finding("feature_equals_target", f"Feature '{feature}' exactly matches target '{target}'."))
-            if values.shape[0] > 1 and float(np.std(values)) > 0 and float(np.std(target_values)) > 0:
-                correlation = float(np.corrcoef(values, target_values)[0, 1])
+            if valid_mask.sum() > 1:
+                correlation = pearson_correlation(values[valid_mask].tolist(), target_values[valid_mask].tolist())
                 if abs(correlation) >= 0.999:
                     findings.append(high_finding("near_perfect_feature_target_correlation", f"Feature '{feature}' has near-perfect correlation with target '{target}' ({correlation:.6f})."))
 
@@ -483,6 +495,20 @@ def dedupe_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def normalize_token(value: str) -> str:
     return value.strip().replace("-", "_").replace(" ", "_").lower()
+
+
+def pearson_correlation(left: list[float], right: list[float]) -> float:
+    if len(left) != len(right) or len(left) < 2:
+        return 0.0
+    left_mean = _mean(left)
+    right_mean = _mean(right)
+    left_centered = [value - left_mean for value in left]
+    right_centered = [value - right_mean for value in right]
+    left_sum = sum(value * value for value in left_centered)
+    right_sum = sum(value * value for value in right_centered)
+    if left_sum <= 0 or right_sum <= 0:
+        return 0.0
+    return sum(a * b for a, b in zip(left_centered, right_centered)) / ((left_sum * right_sum) ** 0.5)
 
 
 def _read_json(path: Path) -> Any:

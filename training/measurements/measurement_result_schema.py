@@ -19,11 +19,25 @@ from training.measurements.measurement_uncertainty import (
     apply_uncertainty_policy,
     fit_uncertainty_policy,
 )
+from training.measurements.measurement_targets import (
+    ALL_MEASUREMENT_TARGETS,
+    GENDER_MEASUREMENT_SCHEMA_VERSION,
+    ProfileType,
+    normalize_profile_type,
+    target_availability_payload,
+    target_available_for_profile,
+    targets_for_profile,
+)
+
+
+def _result_target_name(target: str) -> str:
+    return target.removesuffix("_cm").removesuffix("_kg")
+
 
 SAMPLE_RESULT_JSON = "sample_measurement_result.json"
 SCHEMA_SUMMARY_MD = "measurement_schema_summary.md"
 
-SUPPORTED_TARGETS = [
+LEGACY_RESULT_TARGET_ORDER = [
     "chest",
     "waist",
     "hip",
@@ -31,13 +45,21 @@ SUPPORTED_TARGETS = [
     "shoulder",
     "calf",
     "height",
+    "weight",
     "inseam",
     "neck",
     "sleeve",
 ]
+ALL_RESULT_TARGETS = [_result_target_name(target) for target in ALL_MEASUREMENT_TARGETS]
+_DEFAULT_RESULT_TARGETS = [_result_target_name(target) for target in targets_for_profile(ProfileType.UNSPECIFIED.value)]
+SUPPORTED_TARGETS = [
+    *[target for target in LEGACY_RESULT_TARGET_ORDER if target in _DEFAULT_RESULT_TARGETS],
+    *[target for target in _DEFAULT_RESULT_TARGETS if target not in LEGACY_RESULT_TARGET_ORDER],
+]
 AI_RESIDUAL_TARGETS = {"chest", "waist", "hip", "thigh"}
-LANDMARK_REQUIRED_TARGETS = {"inseam", "neck", "sleeve"}
-UNAVAILABLE_TARGETS = {"shoulder", "calf"}
+LANDMARK_REQUIRED_TARGETS = {"inseam", "neck", "sleeve", "sleeve_shoulder_to_wrist", "wrist", "knee", "ankle"}
+MANUAL_USER_INPUT_TARGETS = {"height", "weight"}
+UNAVAILABLE_TARGETS = set(SUPPORTED_TARGETS) - AI_RESIDUAL_TARGETS - LANDMARK_REQUIRED_TARGETS - MANUAL_USER_INPUT_TARGETS
 THIGH_CALIBRATION_RISK_NOTE = "Phase 4F synthetic interval coverage for thigh_cm was 0.8400, so thigh requires conservative review."
 
 
@@ -114,7 +136,7 @@ class MeasurementTargetResult:
     notes: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        if self.target not in SUPPORTED_TARGETS:
+        if self.target not in ALL_RESULT_TARGETS:
             raise ValueError(f"Unsupported measurement target: {self.target}")
         if not self.product_action:
             raise ValueError(f"Measurement target {self.target} requires a product action.")
@@ -161,20 +183,25 @@ class MeasurementResult:
     dataset_split: str
     targets: list[MeasurementTargetResult]
     metadata: MeasurementModelMetadata
+    profile_type: str = ProfileType.UNSPECIFIED.value
     caveats: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         target_names = [target.target for target in self.targets]
-        if target_names != SUPPORTED_TARGETS:
-            raise ValueError(f"Measurement result must include supported targets in stable order: {SUPPORTED_TARGETS}")
+        expected_targets = result_targets_for_profile(self.profile_type)
+        if target_names != expected_targets:
+            raise ValueError(f"Measurement result must include targets for profile {self.profile_type} in stable order: {expected_targets}")
         if self.metadata.real_world_validated:
             raise ValueError("Body AI measurement results must default to real_world_validated=false until real validation exists.")
 
     def to_payload(self) -> dict[str, Any]:
         return {
+            "schema_version": GENDER_MEASUREMENT_SCHEMA_VERSION,
             "result_id": self.result_id,
             "sample_id": self.sample_id,
             "dataset_split": self.dataset_split,
+            "profile_type": self.profile_type,
+            "target_availability": target_availability_payload(self.profile_type),
             "targets": [target.to_payload() for target in self.targets],
             "metadata": self.metadata.to_payload(),
             "caveats": list(self.caveats),
@@ -186,11 +213,12 @@ def export_sample_measurement_result(
     output_dir: str | Path = "artifacts/phase_4g_measurement_result_contract",
     run_name: str = DEFAULT_RUN_NAME,
     sample_id: str | None = None,
+    profile_type: str = ProfileType.UNSPECIFIED.value,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    result = build_measurement_result_from_predictions(predictions_csv, run_name, sample_id, generated_at=generated_at)
+    result = build_measurement_result_from_predictions(predictions_csv, run_name, sample_id, profile_type=profile_type, generated_at=generated_at)
     payload = result.to_payload()
     write_json(output_path / SAMPLE_RESULT_JSON, payload)
     (output_path / SCHEMA_SUMMARY_MD).write_text(format_schema_summary(result), encoding="utf-8")
@@ -205,6 +233,7 @@ def build_measurement_result_from_predictions(
     predictions_csv: str | Path = DEFAULT_PHASE4D_PREDICTIONS,
     run_name: str = DEFAULT_RUN_NAME,
     sample_id: str | None = None,
+    profile_type: str = ProfileType.UNSPECIFIED.value,
     generated_at: str | None = None,
 ) -> MeasurementResult:
     raw_rows = [row for row in load_prediction_rows(predictions_csv) if row["run_name"] == run_name]
@@ -228,13 +257,15 @@ def build_measurement_result_from_predictions(
         training_dataset_id="phase_3t_realistic_1000",
         generated_at=generated_at or datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     )
-    targets = [target_result_for_name(target, row_by_target.get(target)) for target in SUPPORTED_TARGETS]
+    normalized_profile_type = normalize_profile_type(profile_type)
+    targets = [target_result_for_name(target, row_by_target.get(target), normalized_profile_type) for target in result_targets_for_profile(normalized_profile_type)]
     return MeasurementResult(
         result_id=f"body_ai_measurement_{selected_sample_id}",
         sample_id=selected_sample_id,
         dataset_split=str(sample_rows[0]["dataset_split"]),
         targets=targets,
         metadata=metadata,
+        profile_type=normalized_profile_type,
         caveats=[
             "Synthetic calibrated-label validation only; not real-world production readiness.",
             "Manual confirmation is required before custom garment cutting decisions.",
@@ -249,10 +280,23 @@ def first_sample_id(rows: list[dict[str, Any]]) -> str:
     return str(sorted({row["sample_id"] for row in selected_rows})[0])
 
 
-def target_result_for_name(target: str, row: dict[str, Any] | None) -> MeasurementTargetResult:
+def result_targets_for_profile(profile_type: str) -> list[str]:
+    return _ordered_result_targets(targets_for_profile(profile_type))
+
+
+def _ordered_result_targets(targets: list[str] | tuple[str, ...]) -> list[str]:
+    names = [_result_target_name(target) for target in targets]
+    legacy = [target for target in LEGACY_RESULT_TARGET_ORDER if target in names]
+    expanded = [target for target in names if target not in legacy]
+    return legacy + expanded
+
+
+def target_result_for_name(target: str, row: dict[str, Any] | None, profile_type: str = ProfileType.UNSPECIFIED.value) -> MeasurementTargetResult:
+    if not target_available_for_profile(target, profile_type):
+        return unavailable_result(target)
     if row is not None:
         return ai_geometry_residual_result(target, row)
-    if target == "height":
+    if target in MANUAL_USER_INPUT_TARGETS:
         return manual_user_input_result(target)
     if target in LANDMARK_REQUIRED_TARGETS:
         return landmark_required_result(target)
@@ -284,6 +328,7 @@ def ai_geometry_residual_result(target: str, row: dict[str, Any]) -> Measurement
 
 
 def manual_user_input_result(target: str) -> MeasurementTargetResult:
+    label = "Height" if target == "height" else "This measurement"
     return MeasurementTargetResult(
         target=target,
         estimate_cm=None,
@@ -292,7 +337,7 @@ def manual_user_input_result(target: str) -> MeasurementTargetResult:
         product_action=MeasurementProductAction.USER_INPUT_REQUIRED,
         source=MeasurementSource.MANUAL_USER_INPUT_REQUIRED,
         quality_flags=[MeasurementQualityFlag.USER_INPUT_REQUIRED],
-        notes=["Height defaults to user input until a real-world height capture path is implemented."],
+        notes=[f"{label} defaults to user input until a real-world capture path is implemented."],
     )
 
 
@@ -401,8 +446,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--run-name", default=DEFAULT_RUN_NAME)
     parser.add_argument("--sample-id")
+    parser.add_argument("--profile-type", default=ProfileType.UNSPECIFIED.value, choices=[profile.value for profile in ProfileType])
     args = parser.parse_args(argv)
-    result = export_sample_measurement_result(args.predictions, args.output, args.run_name, args.sample_id)
+    result = export_sample_measurement_result(args.predictions, args.output, args.run_name, args.sample_id, profile_type=args.profile_type)
     print(f"Sample measurement result: {result['sample_measurement_result_json']}")
     print(f"Schema summary: {result['measurement_schema_summary_md']}")
     return 0
