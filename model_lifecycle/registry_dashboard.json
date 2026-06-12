@@ -1,0 +1,9 @@
+{
+  "archived_models": [],
+  "evaluation_candidates": [],
+  "generated_at": null,
+  "production_model": null,
+  "recent_training_runs": [],
+  "schema_version": "model-lifecycle-dashboard-v1",
+  "training_queue": []
+}
