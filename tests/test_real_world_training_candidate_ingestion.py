@@ -8,161 +8,256 @@ import pytest
 
 from training.datasets.real_world_training_candidate import (
     RealWorldDatasetIngestionError,
-    ingest_real_world_training_candidate,
-    load_and_validate_export_package,
+    format_dataset_registry,
+    import_real_world_dataset,
 )
 
 
-def test_valid_export_imports_and_registers_dataset(tmp_path: Path) -> None:
-    incoming_root = tmp_path / "incoming"
-    processed_root = tmp_path / "processed"
-    registry_path = tmp_path / "dataset_registry.json"
-    package_dir = _write_export_package(incoming_root, "v1")
+def test_valid_import_registers_approved_training_candidate(tmp_path: Path) -> None:
+    package_dir = _write_export_package(tmp_path / "data" / "real_world" / "incoming", "rw-2026-06-12")
+    registry_path = tmp_path / "dataset_registry" / "datasets.json"
+    report_path = tmp_path / "reports" / "dataset_validation_report.json"
 
-    result = ingest_real_world_training_candidate(
-        "v1",
-        incoming_root=incoming_root,
-        processed_root=processed_root,
-        registry_path=registry_path,
+    result = import_real_world_dataset(
+        package_dir / "dataset_export_manifest.json",
         import_timestamp="2026-06-12T12:00:00Z",
+        real_world_root=tmp_path / "data" / "real_world",
+        registry_path=registry_path,
+        report_path=report_path,
     )
 
-    assert result.dataset_version == "v1"
-    assert result.validation_status == "ready_for_training"
-    assert result.approved_for_training is True
+    assert result.dataset_version == "rw-2026-06-12"
+    assert result.status == "approved_for_training"
+    assert result.validation_status == "validated"
+    assert result.training_status == "not_started"
     assert result.record_count == 1
-    assert (processed_root / "v1" / "images" / "P001_front.jpg").exists()
-    assert (processed_root / "v1" / "labels.csv").read_text(encoding="utf-8").startswith("participant_code")
-    assert (processed_root / "v1" / "metadata.json").exists()
-    assert (processed_root / "v1" / "quality_scores.csv").exists()
-    assert (processed_root / "v1" / "lineage.json").exists()
+    assert result.quality_score == 98.0
+    assert (tmp_path / "data" / "real_world" / "validated" / "rw-2026-06-12" / "lineage.json").exists()
+    assert (tmp_path / "data" / "real_world" / "archived" / "rw-2026-06-12_export_1").exists()
+
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
-    assert registry["datasets"][0]["dataset_version"] == "v1"
-    assert registry["datasets"][0]["source_export_id"] == "export_1"
-    assert registry["datasets"][0]["approved_for_training"] is True
-    assert package_dir.exists()
+    entry = registry["datasets"][0]
+    assert entry["dataset_version"] == "rw-2026-06-12"
+    assert entry["source_system"] == "CUSTOM-FASHION-MARKETPLACE"
+    assert entry["source_export_id"] == "export_1"
+    assert entry["schema_version"] == "real-world-dataset-export-v1"
+    assert entry["image_count"] == 3
+    assert entry["measurement_count"] == 7
+    assert entry["participant_count"] == 1
+    assert entry["validation_status"] == "validated"
+    assert entry["training_status"] == "not_started"
+    assert entry["status"] == "approved_for_training"
+    assert entry["lineage"]["source_app_version"] == "fashionapp-field-data-beta"
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["missing_images"] == []
+    assert report["missing_labels"] == []
+    assert report["schema_mismatches"] == []
 
 
-def test_missing_consent_fails(tmp_path: Path) -> None:
-    package_dir = _write_export_package(tmp_path / "incoming", "v1")
-    _mutate_record(package_dir, lambda record: record.update({"consentStatus": "withdrawn"}))
-
-    with pytest.raises(RealWorldDatasetIngestionError, match="consent"):
-        load_and_validate_export_package(package_dir, "v1")
-
-
-def test_rejected_record_fails(tmp_path: Path) -> None:
-    package_dir = _write_export_package(tmp_path / "incoming", "v1")
-    _mutate_record(package_dir, lambda record: record["quality"].update({"readinessState": "rejected"}))
-
-    with pytest.raises(RealWorldDatasetIngestionError, match="approved for export"):
-        load_and_validate_export_package(package_dir, "v1")
-
-
-def test_missing_image_fails(tmp_path: Path) -> None:
-    package_dir = _write_export_package(tmp_path / "incoming", "v1")
+def test_missing_image_rejects_and_reports(tmp_path: Path) -> None:
+    package_dir = _write_export_package(tmp_path / "data" / "real_world" / "incoming", "rw-1")
     (package_dir / "images" / "back.jpg").unlink()
+    report_path = tmp_path / "reports" / "dataset_validation_report.json"
 
-    with pytest.raises(RealWorldDatasetIngestionError, match="image file is missing"):
-        load_and_validate_export_package(package_dir, "v1")
+    with pytest.raises(RealWorldDatasetIngestionError, match="failed validation"):
+        import_real_world_dataset(
+            package_dir / "dataset_export_manifest.json",
+            real_world_root=tmp_path / "data" / "real_world",
+            registry_path=tmp_path / "dataset_registry" / "datasets.json",
+            report_path=report_path,
+        )
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["status"] == "rejected"
+    assert report["missing_images"] == ["P001: back image missing at images\\back.jpg."] or report[
+        "missing_images"
+    ] == ["P001: back image missing at images/back.jpg."]
+    assert (tmp_path / "data" / "real_world" / "rejected" / "rw-1").exists()
 
 
-def test_unsupported_schema_fails(tmp_path: Path) -> None:
-    package_dir = _write_export_package(tmp_path / "incoming", "v1")
-    manifest_path = package_dir / "dataset_export_manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["measurementSchemaVersion"] = "field-measurements-v999"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+def test_missing_label_rejects(tmp_path: Path) -> None:
+    package_dir = _write_export_package(tmp_path / "data" / "real_world" / "incoming", "rw-1")
+    (package_dir / "labels.json").unlink()
 
-    with pytest.raises(RealWorldDatasetIngestionError, match="Unsupported measurement schema"):
-        load_and_validate_export_package(package_dir, "v1")
+    with pytest.raises(RealWorldDatasetIngestionError):
+        import_real_world_dataset(
+            package_dir / "dataset_export_manifest.json",
+            real_world_root=tmp_path / "data" / "real_world",
+            registry_path=tmp_path / "dataset_registry" / "datasets.json",
+            report_path=tmp_path / "reports" / "dataset_validation_report.json",
+        )
 
 
-def test_missing_measurement_fails(tmp_path: Path) -> None:
-    package_dir = _write_export_package(tmp_path / "incoming", "v1")
-    _mutate_record(
-        package_dir,
-        lambda record: record.update(
-            {"measurements": [item for item in record["measurements"] if item["key"] != "waist"]}
-        ),
+def test_missing_consent_metadata_rejects(tmp_path: Path) -> None:
+    package_dir = _write_export_package(tmp_path / "data" / "real_world" / "incoming", "rw-1")
+    (package_dir / "consent_metadata.json").unlink()
+
+    with pytest.raises(RealWorldDatasetIngestionError):
+        import_real_world_dataset(
+            package_dir / "dataset_export_manifest.json",
+            real_world_root=tmp_path / "data" / "real_world",
+            registry_path=tmp_path / "dataset_registry" / "datasets.json",
+            report_path=tmp_path / "reports" / "dataset_validation_report.json",
+        )
+
+
+def test_unsupported_schema_rejects(tmp_path: Path) -> None:
+    package_dir = _write_export_package(tmp_path / "data" / "real_world" / "incoming", "rw-1")
+    _mutate_manifest(package_dir, lambda manifest: manifest.update({"schemaVersion": "real-world-dataset-export-v999"}))
+
+    with pytest.raises(RealWorldDatasetIngestionError):
+        import_real_world_dataset(
+            package_dir / "dataset_export_manifest.json",
+            real_world_root=tmp_path / "data" / "real_world",
+            registry_path=tmp_path / "dataset_registry" / "datasets.json",
+            report_path=tmp_path / "reports" / "dataset_validation_report.json",
+        )
+
+
+def test_duplicate_import_rejects_without_overwriting_registry(tmp_path: Path) -> None:
+    package_dir = _write_export_package(tmp_path / "data" / "real_world" / "incoming", "rw-1")
+    registry_path = tmp_path / "dataset_registry" / "datasets.json"
+    report_path = tmp_path / "reports" / "dataset_validation_report.json"
+    import_real_world_dataset(
+        package_dir / "dataset_export_manifest.json",
+        real_world_root=tmp_path / "data" / "real_world",
+        registry_path=registry_path,
+        report_path=report_path,
     )
 
-    with pytest.raises(RealWorldDatasetIngestionError, match="missing required measurements"):
-        load_and_validate_export_package(package_dir, "v1")
+    with pytest.raises(RealWorldDatasetIngestionError, match="Duplicate"):
+        import_real_world_dataset(
+            package_dir / "dataset_export_manifest.json",
+            real_world_root=tmp_path / "data" / "real_world",
+            registry_path=registry_path,
+            report_path=report_path,
+        )
+
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert len(registry["datasets"]) == 1
 
 
-def _write_export_package(incoming_root: Path, dataset_version: str) -> Path:
+def test_registry_viewer_shows_dataset_status_and_quality(tmp_path: Path) -> None:
+    package_dir = _write_export_package(tmp_path / "data" / "real_world" / "incoming", "rw-1")
+    registry_path = tmp_path / "dataset_registry" / "datasets.json"
+    import_real_world_dataset(
+        package_dir / "dataset_export_manifest.json",
+        real_world_root=tmp_path / "data" / "real_world",
+        registry_path=registry_path,
+        report_path=tmp_path / "reports" / "dataset_validation_report.json",
+    )
+
+    output = format_dataset_registry(registry_path)
+
+    assert "dataset_version" in output
+    assert "rw-1" in output
+    assert "approved_for_training" in output
+    assert "98.0" in output
+
+
+def test_duplicate_participants_rejects_and_updates_registry(tmp_path: Path) -> None:
+    package_dir = _write_export_package(tmp_path / "data" / "real_world" / "incoming", "rw-1", duplicate=True)
+    registry_path = tmp_path / "dataset_registry" / "datasets.json"
+    report_path = tmp_path / "reports" / "dataset_validation_report.json"
+
+    with pytest.raises(RealWorldDatasetIngestionError):
+        import_real_world_dataset(
+            package_dir / "dataset_export_manifest.json",
+            real_world_root=tmp_path / "data" / "real_world",
+            registry_path=registry_path,
+            report_path=report_path,
+        )
+
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert registry["datasets"][0]["status"] == "rejected"
+    assert registry["datasets"][0]["validation_status"] == "rejected"
+    assert registry["datasets"][0]["training_status"] == "not_started"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["duplicate_participants"] == ["P001"]
+
+
+def _write_export_package(incoming_root: Path, dataset_version: str, *, duplicate: bool = False) -> Path:
     package_dir = incoming_root / dataset_version
     image_dir = package_dir / "images"
     image_dir.mkdir(parents=True)
     for pose in ("front", "side", "back"):
         (image_dir / f"{pose}.jpg").write_bytes(f"{pose}-image".encode("utf-8"))
 
+    records = [_record(dataset_version, "P001")]
+    if duplicate:
+        records.append(_record(dataset_version, "P001"))
+        for pose in ("front", "side", "back"):
+            (image_dir / f"{pose}-duplicate.jpg").write_bytes(f"{pose}-duplicate".encode("utf-8"))
+        for image in records[1]["images"]:
+            image["imageAssetId"] = f"images/{image['poseType']}-duplicate.jpg"
+
     manifest = {
-        "appVersion": "field-data-beta",
         "approvedOnly": True,
-        "consentVersion": "field-data-consent-v1",
         "datasetVersion": dataset_version,
-        "excludedRecords": {"images": [], "measurements": []},
         "exportId": "export_1",
         "exportTimestamp": "2026-06-12T12:00:00Z",
-        "exportedByAdminId": "dataset_admin_1",
-        "imageChecksums": {},
-        "imageCount": 3,
+        "imageCount": 3 * len(records),
         "imageQualitySchemaVersion": "image-quality-v1",
-        "measurementCount": 7,
+        "labelsPath": "labels.json",
+        "measurementCount": 7 * len(records),
         "measurementSchemaVersion": "field-measurements-v1",
-        "sessionCount": 1,
+        "metadataPath": "metadata.json",
+        "participantCount": len({record["participantCode"] for record in records}),
+        "recordsPath": "records.json",
+        "schemaVersion": "real-world-dataset-export-v1",
+        "sourceAppVersion": "fashionapp-field-data-beta",
+        "sourceDatasetVersion": dataset_version,
+        "sourceExportId": "export_1",
+        "sourceSystem": "CUSTOM-FASHION-MARKETPLACE",
+        "consentMetadataPath": "consent_metadata.json",
     }
-    record = {
-        "collectorId": "collector_1",
+    labels = {
+        "labels": [
+            {"participantCode": "P001", "measurements": {key: 100 for key in _measurement_keys()}},
+        ]
+    }
+    metadata = {"source": "CUSTOM-FASHION-MARKETPLACE", "datasetVersion": dataset_version}
+    consent = {"participants": [{"participantCode": "P001", "consentStatus": "granted", "consentVersion": "field-v1"}]}
+
+    (package_dir / "dataset_export_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (package_dir / "records.json").write_text(json.dumps({"records": records}), encoding="utf-8")
+    (package_dir / "labels.json").write_text(json.dumps(labels), encoding="utf-8")
+    (package_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    (package_dir / "consent_metadata.json").write_text(json.dumps(consent), encoding="utf-8")
+    return package_dir
+
+
+def _record(dataset_version: str, participant_code: str) -> dict[str, object]:
+    return {
         "consentStatus": "granted",
-        "datasetCandidateId": "candidate_1",
         "datasetVersion": dataset_version,
-        "images": [
-            _image("front"),
-            _image("side"),
-            _image("back"),
-        ],
+        "images": [_image("front"), _image("side"), _image("back")],
         "lineage": {"collectionSessionId": "session_1", "imageVersion": 1, "measurementVersion": 1},
         "measurements": [
             {"key": key, "reviewStatus": "approved", "valueCm": 100}
-            for key in ("height", "weight", "bust_chest", "waist", "hips", "shoulder", "dress_length")
+            for key in _measurement_keys()
         ],
-        "participantCode": "P001",
+        "participantCode": participant_code,
         "quality": {"overallDatasetReadinessScore": 98, "readinessState": "approved_for_export"},
-        "schemaVersions": {
-            "appVersion": "field-data-beta",
-            "consentVersion": "field-data-consent-v1",
-            "imageQualitySchemaVersion": "image-quality-v1",
-            "measurementSchemaVersion": "field-measurements-v1",
-        },
     }
-    (package_dir / "dataset_export_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (package_dir / "records.json").write_text(json.dumps({"records": [record]}), encoding="utf-8")
-    return package_dir
 
 
 def _image(pose: str) -> dict[str, object]:
     return {
         "imageAssetId": f"images/{pose}.jpg",
         "poseType": pose,
-        "qualityScore": 100,
-        "qualitySubScores": {
-            "duplicateRiskScore": 100,
-            "framingScore": 100,
-            "fullBodyVisibilityScore": 100,
-            "lightingScore": 100,
-            "overallQualityScore": 100,
-            "poseScore": 100,
-            "sharpnessScore": 100,
-        },
+        "qualityScore": 98,
         "reviewStatus": "approved",
     }
 
 
-def _mutate_record(package_dir: Path, update: Callable[[dict[str, object]], None]) -> None:
-    records_path = package_dir / "records.json"
-    payload = json.loads(records_path.read_text(encoding="utf-8"))
-    update(payload["records"][0])
-    records_path.write_text(json.dumps(payload), encoding="utf-8")
+def _measurement_keys() -> tuple[str, ...]:
+    return ("height", "weight", "bust_chest", "waist", "hips", "shoulder", "dress_length")
+
+
+def _mutate_manifest(package_dir: Path, update: Callable[[dict[str, object]], None]) -> None:
+    manifest_path = package_dir / "dataset_export_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    update(manifest)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
