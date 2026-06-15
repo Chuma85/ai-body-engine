@@ -10,6 +10,9 @@ from training.datasets.real_world_training_candidate import (
     RealWorldDatasetIngestionError,
     format_dataset_registry,
     import_real_world_dataset,
+    _measurement_values,
+    _record_images_by_view,
+    _record_metadata,
 )
 
 
@@ -175,6 +178,81 @@ def test_duplicate_participants_rejects_and_updates_registry(tmp_path: Path) -> 
     assert registry["datasets"][0]["training_status"] == "not_started"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["duplicate_participants"] == ["P001"]
+
+
+def test_fashionapp_tester_record_photos_measurements_cm_and_garment_context_parse() -> None:
+    record = {
+        "session_id": "test-session-001",
+        "tester_id": "tester-001",
+        "photos": {
+            "front": "front.jpg",
+            "side": "side.jpg",
+            "back": "back.jpg",
+        },
+        "measurements_cm": {
+            "height": 170,
+            "chest": 95,
+            "waist": 80,
+            "hip": 98,
+        },
+        "garment_context": {
+            "garment_type": "Dress",
+            "garment_type_other": None,
+            "fabric_type": "Ankara",
+            "fabric_type_other": None,
+            "fit_preference": "Regular",
+            "fit_preference_other": None,
+            "occasion": "Wedding",
+            "occasion_other": None,
+        },
+        "source": "real_tester_collection",
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+
+    images_by_view = _record_images_by_view(record)
+    measurements = _measurement_values(record)
+    metadata = _record_metadata(record)
+
+    assert set(images_by_view) == {"front", "side", "back"}
+    assert images_by_view["front"]["imageAssetId"] == "front.jpg"
+    assert images_by_view["side"]["poseType"] == "side"
+    assert measurements["height"] == 170
+    assert measurements["chest"] == 95
+    assert measurements["waist"] == 80
+    assert measurements["hip"] == 98
+    assert measurements["bust_chest"] == 95
+    assert measurements["hips"] == 98
+    assert metadata["garment_context"] == record["garment_context"]
+    assert "garment_context" not in measurements
+    assert all(key not in measurements for key in record["garment_context"])
+
+
+def test_dict_images_and_measurements_remain_supported() -> None:
+    record = {
+        "images": {
+            "front": "front.jpg",
+            "side": "side.jpg",
+            "back": "back.jpg",
+        },
+        "measurements": {
+            "height": 170,
+            "chest": 95,
+            "waist": 80,
+            "hip": 98,
+        },
+    }
+
+    images_by_view = _record_images_by_view(record)
+    measurements = _measurement_values(record)
+
+    assert set(images_by_view) == {"front", "side", "back"}
+    assert images_by_view["back"]["imageAssetId"] == "back.jpg"
+    assert measurements["height"] == 170
+    assert measurements["chest"] == 95
+    assert measurements["waist"] == 80
+    assert measurements["hip"] == 98
+    assert measurements["bust_chest"] == 95
+    assert measurements["hips"] == 98
 
 
 def _write_export_package(incoming_root: Path, dataset_version: str, *, duplicate: bool = False) -> Path:

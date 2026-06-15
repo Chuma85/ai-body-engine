@@ -31,6 +31,10 @@ REQUIRED_MEASUREMENTS = (
     "shoulder",
     "dress_length",
 )
+MEASUREMENT_ALIASES = {
+    "chest": "bust_chest",
+    "hip": "hips",
+}
 
 
 class RealWorldDatasetIngestionError(ValueError):
@@ -401,7 +405,8 @@ def _validate_records(
 
     for index, record in enumerate(records, start=1):
         participant_id = str(
-            _value(record, "participant_code", "participantCode", "participant_id", "participantId", "id") or f"record_{index}"
+            _value(record, "participant_code", "participantCode", "participant_id", "participantId", "tester_id", "testerId", "id")
+            or f"record_{index}"
         )
         if participant_id in participants:
             report["duplicate_participants"].append(participant_id)
@@ -607,8 +612,18 @@ def _write_lineage_file(target_dir: Path, lineage: dict[str, Any]) -> None:
 
 def _record_images_by_view(record: dict[str, Any]) -> dict[str, dict[str, Any]]:
     images = record.get("images")
-    if not isinstance(images, list):
-        return {}
+    if isinstance(images, list):
+        return _image_list_by_view(images)
+    if isinstance(images, dict):
+        return _image_mapping_by_view(images)
+
+    photos = record.get("photos")
+    if isinstance(photos, dict):
+        return _image_mapping_by_view(photos)
+    return {}
+
+
+def _image_list_by_view(images: list[Any]) -> dict[str, dict[str, Any]]:
     by_view: dict[str, dict[str, Any]] = {}
     for image in images:
         if not isinstance(image, dict):
@@ -619,13 +634,28 @@ def _record_images_by_view(record: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return by_view
 
 
+def _image_mapping_by_view(images: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    by_view: dict[str, dict[str, Any]] = {}
+    for view, image in images.items():
+        if not view:
+            continue
+        view_name = str(view)
+        if isinstance(image, dict):
+            image_payload = dict(image)
+            image_payload.setdefault("poseType", view_name)
+            by_view[view_name] = image_payload
+        elif image not in (None, ""):
+            by_view[view_name] = {"imageAssetId": str(image), "poseType": view_name}
+    return by_view
+
+
 def _measurement_values(record: dict[str, Any]) -> dict[str, float | None]:
     measurements = record.get("measurements")
     values: dict[str, float | None] = {}
     if isinstance(measurements, dict):
         for key, value in measurements.items():
             values[str(key)] = _as_float(value)
-        return values
+        return _with_measurement_aliases(values)
     if isinstance(measurements, list):
         for measurement in measurements:
             if not isinstance(measurement, dict):
@@ -636,7 +666,32 @@ def _measurement_values(record: dict[str, Any]) -> dict[str, float | None]:
             key = _value(measurement, "key", "name")
             if key:
                 values[str(key)] = _as_float(_value(measurement, "value_cm", "valueCm", "value"))
+        return _with_measurement_aliases(values)
+
+    measurements_cm = record.get("measurements_cm")
+    if isinstance(measurements_cm, dict):
+        for key, value in measurements_cm.items():
+            values[str(key)] = _as_float(value)
+    return _with_measurement_aliases(values)
+
+
+def _with_measurement_aliases(values: dict[str, float | None]) -> dict[str, float | None]:
+    for source_key, target_key in MEASUREMENT_ALIASES.items():
+        if target_key not in values and source_key in values:
+            values[target_key] = values[source_key]
     return values
+
+
+def _record_metadata(record: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for key in ("session_id", "sessionId", "tester_id", "testerId", "source", "created_at", "createdAt"):
+        value = record.get(key)
+        if value not in (None, ""):
+            metadata[key] = value
+    garment_context = record.get("garment_context")
+    if isinstance(garment_context, dict):
+        metadata["garment_context"] = dict(garment_context)
+    return metadata
 
 
 def _record_quality_score(record: dict[str, Any], images_by_view: dict[str, dict[str, Any]]) -> float:
