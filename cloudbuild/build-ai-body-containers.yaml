@@ -1,0 +1,91 @@
+substitutions:
+  _REGION: northamerica-northeast2
+  _REPOSITORY: fashionai-containers
+
+steps:
+  - name: python:3.12.10-slim-bookworm
+    id: validate-before-build
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        python -m pip install --no-cache-dir -r requirements-container.lock -r requirements-validation.lock
+        python -m pytest -q --basetemp .tmp/cloudbuild-pytest
+        python scripts/gcp/validate-cloud-configuration.py
+        python -m compileall -q app training synthetic scripts containers
+        python -m synthetic.generator.generate_dataset --count 2 --output-dir .tmp/container-smoke/synthetic --width 32 --height 32 --seed 42
+        echo "Lint: not configured in this repository"
+        echo "Type checking: not configured in this repository"
+
+  - name: gcr.io/cloud-builders/gcloud
+    id: immutable-tag-preflight
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        sha="${COMMIT_SHA}"
+        if [[ "$${#sha}" -ne 40 ]]; then echo "A 40-character COMMIT_SHA is required." >&2; exit 1; fi
+        for image in body-engine-training body-engine-evaluation body-engine-inference dataset-validator; do
+          uri="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/$$image:$$sha"
+          if gcloud artifacts docker images describe "$$uri" >/dev/null 2>&1; then
+            echo "Refusing to overwrite immutable image: $$uri" >&2
+            exit 1
+          fi
+        done
+
+  - name: gcr.io/cloud-builders/docker
+    id: build-images
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        sha="${COMMIT_SHA}"
+        docker build --file containers/base/Dockerfile --tag "body-engine-base:$$sha" .
+        for image in body-engine-training body-engine-evaluation body-engine-inference dataset-validator; do
+          folder="$${image#body-engine-}"
+          if [[ "$$image" == "dataset-validator" ]]; then folder="dataset-validator"; fi
+          uri="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/$$image:$$sha"
+          docker build --file "containers/$$folder/Dockerfile" --build-arg "BASE_IMAGE=body-engine-base:$$sha" --tag "$$uri" .
+        done
+
+  - name: gcr.io/cloud-builders/docker
+    id: smoke-before-publish
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        sha="${COMMIT_SHA}"
+        for image in body-engine-training body-engine-evaluation body-engine-inference dataset-validator; do
+          uri="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/$$image:$$sha"
+          docker run --rm "$$uri" --help >/dev/null
+        done
+        validator="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/dataset-validator:$$sha"
+        docker run --rm --mount type=bind,source=/workspace/.tmp/container-smoke/synthetic,target=/inputs/synthetic,readonly -e DATASET_URI=/inputs/synthetic -e DATASET_KIND=synthetic "$$validator"
+
+  - name: gcr.io/cloud-builders/docker
+    id: publish-immutable-images
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        sha="${COMMIT_SHA}"
+        for image in body-engine-training body-engine-evaluation body-engine-inference dataset-validator; do
+          uri="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/$$image:$$sha"
+          docker push "$$uri"
+          echo "$$uri"
+        done
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 3600s

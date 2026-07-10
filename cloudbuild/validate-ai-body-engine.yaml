@@ -1,0 +1,49 @@
+steps:
+  - name: python:3.12.10-slim-bookworm
+    id: repository-validation
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        python -m pip install --no-cache-dir -r requirements-container.lock -r requirements-validation.lock
+        python -m pytest -q --basetemp .tmp/cloudbuild-pytest
+        python scripts/gcp/validate-cloud-configuration.py
+        python -m compileall -q app training synthetic scripts containers
+        python -m synthetic.generator.generate_dataset --count 2 --output-dir .tmp/container-smoke/synthetic --width 32 --height 32 --seed 42
+        echo "Lint: not configured in this repository"
+        echo "Type checking: not configured in this repository"
+
+  - name: gcr.io/cloud-builders/docker
+    id: build-validation-images
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        docker build --file containers/base/Dockerfile --tag body-engine-base:validation .
+        for image in body-engine-training body-engine-evaluation body-engine-inference dataset-validator; do
+          folder="$${image#body-engine-}"
+          if [[ "$$image" == "dataset-validator" ]]; then folder="dataset-validator"; fi
+          docker build --file "containers/$$folder/Dockerfile" --build-arg BASE_IMAGE=body-engine-base:validation --tag "$$image:validation" .
+        done
+
+  - name: gcr.io/cloud-builders/docker
+    id: container-smoke-tests
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        for image in body-engine-training body-engine-evaluation body-engine-inference dataset-validator; do
+          docker run --rm "$$image:validation" --help >/dev/null
+        done
+        docker run --rm --mount type=bind,source=/workspace/.tmp/container-smoke/synthetic,target=/inputs/synthetic,readonly -e DATASET_URI=/inputs/synthetic -e DATASET_KIND=synthetic dataset-validator:validation
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 3600s
