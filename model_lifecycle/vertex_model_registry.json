@@ -1,0 +1,8 @@
+{
+  "schema_version": "vertex-model-registry-v1",
+  "model_name": "fashionai-body-measurement",
+  "current_promoted_version_id": null,
+  "versions": [],
+  "promotion_history": [],
+  "rollback_history": []
+}

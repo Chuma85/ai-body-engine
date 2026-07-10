@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fashionai.example/schemas/model-registry-record.schema.json",
+  "title": "AI Body Engine Vertex Model Registry Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "model_version_id", "model_name", "artifact_uri", "model_format",
+    "training_run_id", "source_dataset_version", "git_commit_sha", "metrics",
+    "evaluation_report_uri", "leakage_audit_status", "compatibility_metadata",
+    "candidate_status", "lifecycle_status", "architecture_backbone", "created_at",
+    "approval_identity", "approval_reference", "vertex_resource_name", "labels"
+  ],
+  "properties": {
+    "schema_version": {"const": "vertex-model-registry-record-v1"},
+    "model_version_id": {"type": "string", "minLength": 1},
+    "model_name": {"type": "string", "minLength": 1},
+    "artifact_uri": {"type": "string", "pattern": "^gs://"},
+    "model_format": {"enum": ["pkl", "joblib", "pt", "pth", "onnx", "ckpt", "h5", "keras", "pb", "savedmodel"]},
+    "training_run_id": {"type": "string", "minLength": 1},
+    "source_dataset_version": {"type": "string", "minLength": 1},
+    "git_commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "metrics": {"type": "object"},
+    "evaluation_report_uri": {"type": "string", "pattern": "^gs://"},
+    "leakage_audit_status": {"enum": ["passed", "failed"]},
+    "compatibility_metadata": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {"status": {"enum": ["passed", "failed"]}}
+    },
+    "candidate_status": {"enum": ["candidate", "evaluation_pending", "approved"]},
+    "lifecycle_status": {"enum": ["candidate", "promoted", "previously_promoted", "rolled_back", "archived"]},
+    "architecture_backbone": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "approval_identity": {"type": ["string", "null"]},
+    "approval_reference": {"type": ["string", "null"]},
+    "vertex_resource_name": {"type": ["string", "null"]},
+    "labels": {"type": "object", "additionalProperties": {"type": "string"}}
+  }
+}

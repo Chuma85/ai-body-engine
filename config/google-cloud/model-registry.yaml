@@ -1,0 +1,27 @@
+schema_version: "1.0"
+project_id: fashionai-501816
+region: northamerica-northeast2
+model_name: fashionai-body-measurement
+artifact_bucket: gs://fashionai-ai-body-models-501816
+local_registry_path: model_lifecycle/vertex_model_registry.json
+local_lifecycle_root: model_lifecycle
+default_candidate_status: candidate
+supported_model_formats:
+  - pkl
+  - joblib
+  - pt
+  - pth
+  - onnx
+  - ckpt
+  - h5
+  - keras
+  - pb
+  - savedmodel
+policy:
+  require_explicit_execute: true
+  require_evaluation_passed: true
+  require_leakage_audit_passed: true
+  require_compatibility_passed: true
+  auto_promote: false
+  auto_deploy: false
+  create_endpoint: false
