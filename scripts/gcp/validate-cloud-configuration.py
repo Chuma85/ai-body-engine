@@ -29,6 +29,7 @@ def main() -> int:
     yaml_paths = [
         ROOT / "config/google-cloud/storage-layout.yaml",
         ROOT / "config/google-cloud/model-registry.yaml",
+        ROOT / "config/google-cloud/retention-policy.yaml",
         *sorted((ROOT / "cloudbuild").glob("*.yaml")),
     ]
     for path in yaml_paths:

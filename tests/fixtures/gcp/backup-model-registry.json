@@ -1,0 +1,11 @@
+{
+  "versions": [
+    {
+      "model_version_id": "model-v1",
+      "artifact_uri": "gs://fixture-models/candidates/model-v1/model.joblib",
+      "evaluation_report_uri": "gs://fixture-artifacts/evaluations/model-v1/report.json",
+      "source_dataset_version": "dataset-v1",
+      "git_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ]
+}

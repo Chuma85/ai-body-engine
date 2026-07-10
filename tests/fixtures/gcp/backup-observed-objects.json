@@ -1,0 +1,19 @@
+{
+  "objects": [
+    {
+      "object_uri": "gs://fixture-datasets/synthetic/dataset-v1/labels.csv",
+      "size_bytes": 10,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "object_uri": "gs://fixture-models/candidates/model-v1/model.joblib",
+      "size_bytes": 20,
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "object_uri": "gs://fixture-artifacts/evaluations/model-v1/report.json",
+      "size_bytes": 30,
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  ]
+}

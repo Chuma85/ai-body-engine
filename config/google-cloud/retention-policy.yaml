@@ -1,0 +1,55 @@
+schema_version: "1.0"
+policy_name: ai-body-engine-backup-retention
+default_mode: dry-run
+cleanup_requires_explicit_approval: true
+automatic_deletion_enabled: false
+
+classifications:
+  synthetic-datasets:
+    categories: [synthetic datasets]
+    minimum_retention_days: 365
+    recommendation: retain active and reproducible versions; review superseded generated copies after checksum-verified replacement
+    cleanup_allowed: true
+    cleanup_mode: explicit-approved-dry-run-first
+  real-world-datasets:
+    categories: [real-world datasets, participant images]
+    minimum_retention_days: null
+    recommendation: retain according to consent, legal basis, privacy deletion, and approved data-governance policy
+    cleanup_allowed: false
+    never_automatically_delete: true
+  verified-exports:
+    categories: [verified exports]
+    minimum_retention_days: 2555
+    recommendation: retain immutable approved lineage exports and legal/audit evidence
+    cleanup_allowed: false
+    never_automatically_delete: true
+  candidate-models:
+    categories: [candidate models, model checkpoints]
+    minimum_retention_days: 365
+    recommendation: retain through evaluation and reproducibility window; archive before any approved cleanup
+    cleanup_allowed: true
+    cleanup_mode: explicit-approved-dry-run-first
+  promoted-models:
+    categories: [promoted models]
+    minimum_retention_days: null
+    recommendation: retain every promoted version and rollback lineage indefinitely
+    cleanup_allowed: false
+    never_automatically_delete: true
+  archived-models:
+    categories: [archived models, pretrained models]
+    minimum_retention_days: 2555
+    recommendation: retain immutable lineage and checksum metadata; review only after replacement and rollback analysis
+    cleanup_allowed: true
+    cleanup_mode: explicit-approved-dry-run-first
+  evaluation-reports:
+    categories: [evaluation reports, comparison reports, leakage audits, training manifests]
+    minimum_retention_days: null
+    recommendation: retain evaluation, leakage, comparison, approval, and audit evidence indefinitely
+    cleanup_allowed: false
+    never_automatically_delete: true
+  database-dumps:
+    categories: [database backup, database dumps]
+    minimum_retention_days: null
+    recommendation: retain under an approved encrypted backup schedule with tested restore points and legal retention review
+    cleanup_allowed: false
+    never_automatically_delete: true

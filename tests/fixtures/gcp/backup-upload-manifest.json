@@ -1,0 +1,24 @@
+{
+  "generated_at_utc": "2026-07-10T12:00:00Z",
+  "objects": [
+    {
+      "gcs_uri": "gs://fixture-datasets/synthetic/dataset-v1/labels.csv",
+      "category": "synthetic datasets",
+      "size_bytes": 10,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "source_relative_path": "data/synthetic/dataset-v1/labels.csv"
+    },
+    {
+      "gcs_uri": "gs://fixture-models/candidates/model-v1/model.joblib",
+      "category": "candidate models",
+      "size_bytes": 20,
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "gcs_uri": "gs://fixture-artifacts/evaluations/model-v1/report.json",
+      "category": "evaluation reports",
+      "size_bytes": 30,
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  ]
+}

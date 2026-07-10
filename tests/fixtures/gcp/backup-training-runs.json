@@ -1,0 +1,10 @@
+{
+  "training_runs": [
+    {
+      "training_run_id": "run-v1",
+      "training_manifest": {
+        "dataset_version": "dataset-v1"
+      }
+    }
+  ]
+}
