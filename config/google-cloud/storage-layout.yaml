@@ -1,0 +1,104 @@
+schema_version: "1.0"
+project_id: fashionai-501816
+region: northamerica-northeast2
+manifest_output_directory: .tmp/gcp-upload-manifests
+
+policy:
+  real_world_uploads_enabled: false
+  logs_upload_enabled: false
+  preserve_relative_paths: true
+  checksum_algorithm: sha256
+
+buckets:
+  datasets:
+    name: fashionai-ai-body-datasets-501816
+    prefixes:
+      synthetic: synthetic
+      real-world: real-world
+      verified-exports: verified-exports
+      training-manifests: training-manifests
+      evaluation-holdouts: evaluation-holdouts
+  models:
+    name: fashionai-ai-body-models-501816
+    prefixes:
+      candidates: candidates
+      promoted: promoted
+      archived: archived
+      pretrained: pretrained
+      checkpoints: checkpoints
+  artifacts:
+    name: fashionai-ai-body-artifacts-501816
+    prefixes:
+      evaluations: evaluations
+      comparison-reports: comparison-reports
+      leakage-audits: leakage-audits
+      logs: logs
+      rendered-assets: rendered-assets
+      migration-manifests: migration-manifests
+  database_backups:
+    name: fashionai-database-backups-501816
+    prefixes:
+      railway: railway
+      cloud-sql: cloud-sql
+
+category_routes:
+  synthetic datasets:
+    bucket: datasets
+    prefix: synthetic
+    approved_roots: [data/synthetic, synthetic/labels]
+  real-world datasets:
+    bucket: datasets
+    prefix: real-world
+    approved_roots: [data/real_world]
+  participant images:
+    bucket: datasets
+    prefix: real-world
+    approved_roots: [data/real_world]
+  verified exports:
+    bucket: datasets
+    prefix: verified-exports
+    approved_roots: [data/real_world]
+  training manifests:
+    bucket: datasets
+    prefix: training-manifests
+    approved_roots: [dataset_registry, model_lifecycle, artifacts]
+  evaluation holdouts:
+    bucket: datasets
+    prefix: evaluation-holdouts
+    approved_roots: [data, artifacts]
+  candidate models:
+    bucket: models
+    prefix: candidates
+    approved_roots: [artifacts, models, checkpoints]
+  promoted models:
+    bucket: models
+    prefix: promoted
+    approved_roots: [artifacts, models]
+  pretrained models:
+    bucket: models
+    prefix: pretrained
+    approved_roots: [artifacts, models]
+  model checkpoints:
+    bucket: models
+    prefix: checkpoints
+    approved_roots: [artifacts, models, checkpoints]
+  evaluation reports:
+    bucket: artifacts
+    prefix: evaluations
+    approved_roots: [reports, artifacts]
+  comparison reports:
+    bucket: artifacts
+    prefix: comparison-reports
+    approved_roots: [reports, artifacts]
+  leakage audits:
+    bucket: artifacts
+    prefix: leakage-audits
+    approved_roots: [reports, artifacts]
+  logs:
+    bucket: artifacts
+    prefix: logs
+    approved_roots: [logs, artifacts/logs]
+  generated renders:
+    bucket: artifacts
+    prefix: rendered-assets
+    approved_roots: [assets/body_meshes, synthetic/renders, data/synthetic, artifacts]
