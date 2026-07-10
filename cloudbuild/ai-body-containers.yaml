@@ -1,0 +1,57 @@
+substitutions:
+  _REGION: northamerica-northeast2
+  _REPOSITORY: fashionai-containers
+  _VERSION_TAG: ""
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    id: build-base
+    args: ["build", "--file", "containers/base/Dockerfile", "--tag", "body-engine-base:${COMMIT_SHA}", "."]
+
+  - name: gcr.io/cloud-builders/docker
+    id: build-workloads
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        for image in body-engine-training body-engine-evaluation body-engine-inference dataset-validator; do
+          dockerfile="containers/$${image#body-engine-}/Dockerfile"
+          if [[ "$$image" == "dataset-validator" ]]; then dockerfile="containers/dataset-validator/Dockerfile"; fi
+          uri="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/$$image:${COMMIT_SHA}"
+          if gcloud artifacts docker images describe "$$uri" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing immutable SHA tag: $$uri" >&2
+            exit 1
+          fi
+          docker build --file "$$dockerfile" --build-arg "BASE_IMAGE=body-engine-base:${COMMIT_SHA}" --tag "$$uri" .
+          docker push "$$uri"
+          echo "$$uri"
+        done
+
+  - name: gcr.io/cloud-builders/gcloud
+    id: optional-version-tags
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        if [[ -z "${_VERSION_TAG}" ]]; then exit 0; fi
+        if [[ "${_VERSION_TAG}" =~ ^(latest|production|promoted)$ ]]; then
+          echo "Reserved mutable/promoted tag is not allowed: ${_VERSION_TAG}" >&2
+          exit 1
+        fi
+        for image in body-engine-training body-engine-evaluation body-engine-inference dataset-validator; do
+          version_uri="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/$$image:${_VERSION_TAG}"
+          if gcloud artifacts docker images describe "$$version_uri" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing version tag: $$version_uri" >&2
+            exit 1
+          fi
+          gcloud artifacts docker tags add \
+            "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/$$image:${COMMIT_SHA}" \
+            "$$version_uri"
+        done
+
+options:
+  logging: CLOUD_LOGGING_ONLY
