@@ -17,7 +17,7 @@ def test_live_backup_has_explicit_approval_and_no_delete_controls() -> None:
 
 def test_preflight_is_upload_free_and_checks_privacy() -> None:
     script = read("scripts/gcp/preflight-live-upload.ps1")
-    for token in ("--filter=status:ACTIVE", "--format=value(account)", "publicAccessPrevention", "uniformBucketLevelAccess", "real-world datasets", "participant images", "forbidden"):
+    for token in ("--filter=status:ACTIVE", "--format=value(account)", "public_access_prevention", "uniform_bucket_level_access", "storage_class", "NORTHAMERICA-NORTHEAST2", "real-world datasets", "participant images", "forbidden"):
         assert token in script
     assert "gcloud storage cp" not in script
 

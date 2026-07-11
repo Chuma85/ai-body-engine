@@ -24,6 +24,7 @@ The current dry-run plan contains 30,316 objects and 10,969,021,482 bytes: datas
 - [ ] Confirm zero `real-world datasets`, `participant images`, and `verified exports` objects.
 - [ ] Confirm zero `.git`, environment files, credentials, virtual environments, caches, build output, or database URLs/credential files.
 - [ ] Confirm all four buckets enforce public access prevention and uniform bucket-level access.
+- [ ] Confirm all four preflight value checks report `enforced`, `true`, `NORTHAMERICA-NORTHEAST2`, and `STANDARD` for public access prevention, uniform access, location, and storage class.
 - [ ] Confirm the active account and project are correct.
 - [ ] Confirm `gcloud auth list --filter=status:ACTIVE --format=value(account)` returns exactly one authenticated account matching `gcloud config get-value account`.
 - [ ] Run the default upload without database flags first.

@@ -17,6 +17,26 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $generator = Join-Path $PSScriptRoot "generate-upload-manifest.py"
 . (Join-Path $PSScriptRoot "gcloud-command.ps1")
 
+function Get-BucketSetting {
+    param(
+        [Parameter(Mandatory = $true)][string]$Bucket,
+        [Parameter(Mandatory = $true)][string]$Setting
+    )
+
+    $result = Invoke-GcloudCommand -Arguments @(
+        "storage", "buckets", "describe", "gs://$Bucket",
+        "--project=$ProjectId", "--format=value($Setting)"
+    )
+    if ($result.ExitCode -ne 0) {
+        throw "Bucket '$Bucket' setting '$Setting' could not be read (gcloud exit $($result.ExitCode))."
+    }
+    $values = @($result.StdOut | ForEach-Object { $_.ToString().Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($values.Count -ne 1) {
+        throw "Bucket '$Bucket' setting '$Setting' is missing or malformed; expected exactly one value."
+    }
+    return $values[0]
+}
+
 if ($ProjectId -ne $expectedProject) { throw "Project must be $expectedProject." }
 if (-not (Get-Command gcloud -ErrorAction SilentlyContinue)) { throw "gcloud CLI is required." }
 $accountResult = Invoke-GcloudCommand -Arguments @("auth", "list", "--filter=status:ACTIVE", "--format=value(account)")
@@ -40,12 +60,18 @@ $configuredProject = if ($configuredProjects.Count -eq 1) { $configuredProjects[
 if ($projectResult.ExitCode -ne 0 -or $configuredProjects.Count -ne 1 -or $configuredProject -ne $expectedProject) { throw "Active gcloud project must be $expectedProject; found '$configuredProject'." }
 
 foreach ($bucket in $buckets) {
-    $bucketResult = Invoke-GcloudCommand -Arguments @("storage", "buckets", "describe", "gs://$bucket", "--project=$ProjectId", "--format=json")
-    if ($bucketResult.ExitCode -ne 0) { throw "Required bucket is missing or inaccessible: $bucket" }
-    $description = ($bucketResult.StdOut -join [Environment]::NewLine) | ConvertFrom-Json
-    if ($description.iamConfiguration.publicAccessPrevention -ne "enforced") { throw "Public access prevention is not enforced: $bucket" }
-    if (-not $description.iamConfiguration.uniformBucketLevelAccess.enabled) { throw "Uniform bucket-level access is not enabled: $bucket" }
-    Write-Host "PASS bucket: $bucket (private, uniform access)"
+    $publicAccessPrevention = Get-BucketSetting -Bucket $bucket -Setting "public_access_prevention"
+    if ($publicAccessPrevention -ine "enforced") { throw "Bucket '$bucket' failed public access prevention: expected 'enforced', found '$publicAccessPrevention'." }
+
+    $uniformAccess = Get-BucketSetting -Bucket $bucket -Setting "uniform_bucket_level_access"
+    if ($uniformAccess -inotmatch '^(true)$') { throw "Bucket '$bucket' failed uniform bucket-level access: expected 'true', found '$uniformAccess'." }
+
+    $location = Get-BucketSetting -Bucket $bucket -Setting "location"
+    if ($location -ine "NORTHAMERICA-NORTHEAST2") { throw "Bucket '$bucket' failed location validation: expected 'NORTHAMERICA-NORTHEAST2', found '$location'." }
+
+    $storageClass = Get-BucketSetting -Bucket $bucket -Setting "storage_class"
+    if ($storageClass -ine "STANDARD") { throw "Bucket '$bucket' failed storage class validation: expected 'STANDARD', found '$storageClass'." }
+    Write-Host "PASS bucket: $bucket (public access prevention enforced, uniform access, NORTHAMERICA-NORTHEAST2, STANDARD)"
 }
 
 if ([string]::IsNullOrWhiteSpace($ManifestPath)) {
