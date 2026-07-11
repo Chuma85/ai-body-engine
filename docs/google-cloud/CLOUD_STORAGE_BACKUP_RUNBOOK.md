@@ -50,7 +50,18 @@ Create missing buckets only:
 .\scripts\gcp\create-storage-buckets.ps1 -ProjectId fashionai-501816 -Region northamerica-northeast2 -Execute
 ```
 
+During existence detection, `gcloud storage buckets describe` returning `404 not found` is the expected signal that a target bucket is missing. The script creates it only when `-Execute` is present. Authentication, permission, network, and ownership/global-name-conflict failures are fatal; resolve them rather than treating the bucket as absent. Existing buckets are never recreated or relaxed.
+
 Buckets use regional Standard storage, uniform bucket-level access, public access prevention, and default Google-managed encryption. Existing buckets are skipped and never deleted.
+
+Verify the final configuration for every configured bucket:
+
+```powershell
+gcloud storage buckets list --project=fashionai-501816 --format="table(name,location,storageClass,uniformBucketLevelAccess,publicAccessPrevention)"
+gcloud storage buckets describe gs://BUCKET_NAME --project=fashionai-501816 --format="yaml(name,location,storageClass,uniformBucketLevelAccess,publicAccessPrevention,encryption)"
+```
+
+An absent customer-managed encryption key in the describe output confirms the retained Google-managed encryption default.
 
 ## Approved asset execution
 

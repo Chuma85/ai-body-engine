@@ -31,6 +31,8 @@ The current dry-run plan contains 30,316 objects and 10,969,021,482 bytes: datas
 
 ## Commands
 
+Bucket discovery may print a `404 not found` for a missing configured bucket; that is expected and creation follows only with `-Execute`. Any permission, authentication, inaccessible globally owned name, or other unexpected error must stop the run. Afterward, list the project buckets and describe each target to verify the configured location, `STANDARD` storage class, uniform bucket-level access, public access prevention, and Google-managed encryption.
+
 ```powershell
 .\scripts\gcp\create-storage-buckets.ps1 -ProjectId fashionai-501816 -Region northamerica-northeast2 -Execute
 .\scripts\gcp\preflight-live-upload.ps1
