@@ -15,18 +15,34 @@ $buckets = @(
 )
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $generator = Join-Path $PSScriptRoot "generate-upload-manifest.py"
+. (Join-Path $PSScriptRoot "gcloud-command.ps1")
 
 if ($ProjectId -ne $expectedProject) { throw "Project must be $expectedProject." }
 if (-not (Get-Command gcloud -ErrorAction SilentlyContinue)) { throw "gcloud CLI is required." }
-$account = (& gcloud auth list --filter=status:ACTIVE --format="value(account)" | Select-Object -First 1)
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($account)) { throw "An authenticated gcloud account is required." }
-$configuredProject = (& gcloud config get-value project 2>$null).Trim()
-if ($LASTEXITCODE -ne 0 -or $configuredProject -ne $expectedProject) { throw "Active gcloud project must be $expectedProject; found '$configuredProject'." }
+$accountResult = Invoke-GcloudCommand -Arguments @("auth", "list", "--filter=status:ACTIVE", "--format=value(account)")
+if ($accountResult.ExitCode -ne 0) {
+    throw "Active gcloud account lookup failed (exit $($accountResult.ExitCode)). Check gcloud authentication and connectivity."
+}
+$accounts = @($accountResult.StdOut | ForEach-Object { $_.ToString().Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+if ($accounts.Count -eq 0) { throw "An authenticated gcloud account is required; no active authenticated account was returned." }
+if ($accounts.Count -ne 1) { throw "Exactly one active authenticated gcloud account is required; found $($accounts.Count)." }
+$account = $accounts[0]
+if ($account -notmatch '^[^\s@]+@[^\s@]+$') { throw "Active gcloud account output is malformed." }
+
+$configuredAccountResult = Invoke-GcloudCommand -Arguments @("config", "get-value", "account")
+$configuredAccounts = @($configuredAccountResult.StdOut | ForEach-Object { $_.ToString().Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+if ($configuredAccountResult.ExitCode -ne 0 -or $configuredAccounts.Count -ne 1) { throw "Configured gcloud account lookup failed or returned an ambiguous value." }
+if ($configuredAccounts[0] -ne $account) { throw "The active authenticated gcloud account does not match the configured gcloud account." }
+
+$projectResult = Invoke-GcloudCommand -Arguments @("config", "get-value", "project")
+$configuredProjects = @($projectResult.StdOut | ForEach-Object { $_.ToString().Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+$configuredProject = if ($configuredProjects.Count -eq 1) { $configuredProjects[0] } else { "" }
+if ($projectResult.ExitCode -ne 0 -or $configuredProjects.Count -ne 1 -or $configuredProject -ne $expectedProject) { throw "Active gcloud project must be $expectedProject; found '$configuredProject'." }
 
 foreach ($bucket in $buckets) {
-    $json = & gcloud storage buckets describe "gs://$bucket" --project=$ProjectId --format=json
-    if ($LASTEXITCODE -ne 0) { throw "Required bucket is missing or inaccessible: $bucket" }
-    $description = $json | ConvertFrom-Json
+    $bucketResult = Invoke-GcloudCommand -Arguments @("storage", "buckets", "describe", "gs://$bucket", "--project=$ProjectId", "--format=json")
+    if ($bucketResult.ExitCode -ne 0) { throw "Required bucket is missing or inaccessible: $bucket" }
+    $description = ($bucketResult.StdOut -join [Environment]::NewLine) | ConvertFrom-Json
     if ($description.iamConfiguration.publicAccessPrevention -ne "enforced") { throw "Public access prevention is not enforced: $bucket" }
     if (-not $description.iamConfiguration.uniformBucketLevelAccess.enabled) { throw "Uniform bucket-level access is not enabled: $bucket" }
     Write-Host "PASS bucket: $bucket (private, uniform access)"

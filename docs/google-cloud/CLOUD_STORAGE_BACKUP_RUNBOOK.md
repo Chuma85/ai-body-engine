@@ -20,6 +20,8 @@ gcloud auth list
 gcloud config get-value project
 ```
 
+The live-upload preflight requires exactly one active authenticated account from `gcloud auth list --filter=status:ACTIVE --format=value(account)`. It also requires that identity to match the configured account and requires the configured project to be exactly `fashionai-501816`. A configured account alone is not accepted when it is not actively authenticated.
+
 ## Validate and dry-run
 
 Generate a checksum-bearing sanitized manifest and print the proposed objects without contacting Google Cloud:

@@ -25,6 +25,7 @@ The current dry-run plan contains 30,316 objects and 10,969,021,482 bytes: datas
 - [ ] Confirm zero `.git`, environment files, credentials, virtual environments, caches, build output, or database URLs/credential files.
 - [ ] Confirm all four buckets enforce public access prevention and uniform bucket-level access.
 - [ ] Confirm the active account and project are correct.
+- [ ] Confirm `gcloud auth list --filter=status:ACTIVE --format=value(account)` returns exactly one authenticated account matching `gcloud config get-value account`.
 - [ ] Run the default upload without database flags first.
 - [ ] Upload the PostgreSQL dump only as a separate explicitly approved run with both database switches.
 - [ ] Retain local files and remote objects after verification.

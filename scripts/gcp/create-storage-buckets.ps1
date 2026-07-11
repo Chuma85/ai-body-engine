@@ -13,26 +13,7 @@ $buckets = @(
     "fashionai-database-backups-501816"
 )
 
-function Invoke-GcloudCapture {
-    param([Parameter(Mandatory = $true)][string[]]$Arguments)
-
-    $previousErrorActionPreference = $ErrorActionPreference
-    $hasNativePreference = Test-Path variable:PSNativeCommandUseErrorActionPreference
-    if ($hasNativePreference) { $previousNativePreference = $PSNativeCommandUseErrorActionPreference }
-    try {
-        # A non-zero native exit is data here. Inspect it before deciding whether
-        # it is the one expected missing-bucket case or a fatal gcloud failure.
-        $ErrorActionPreference = "Continue"
-        if ($hasNativePreference) { $PSNativeCommandUseErrorActionPreference = $false }
-        $output = @(& gcloud @Arguments 2>&1 | ForEach-Object { $_.ToString() })
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-        if ($hasNativePreference) { $PSNativeCommandUseErrorActionPreference = $previousNativePreference }
-    }
-    [pscustomobject]@{ ExitCode = $exitCode; Output = $output }
-}
+. (Join-Path $PSScriptRoot "gcloud-command.ps1")
 
 function Get-BucketState {
     param(
@@ -40,16 +21,16 @@ function Get-BucketState {
         [Parameter(Mandatory = $true)][string]$Project
     )
 
-    $result = Invoke-GcloudCapture -Arguments @(
+    $result = Invoke-GcloudCommand -Arguments @(
         "storage", "buckets", "describe", $Uri, "--project=$Project", "--format=json"
     )
     if ($result.ExitCode -eq 0) {
-        try { $null = ($result.Output -join [Environment]::NewLine) | ConvertFrom-Json }
+        try { $null = ($result.StdOut -join [Environment]::NewLine) | ConvertFrom-Json }
         catch { throw "gcloud returned invalid bucket metadata for ${Uri}: $($_.Exception.Message)" }
         return "Exists"
     }
 
-    $message = $result.Output -join [Environment]::NewLine
+    $message = $result.StdErr -join [Environment]::NewLine
     if ($message -match '(?i)\b404\b' -and $message -match '(?i)\bnot[ -]?found\b') {
         return "Missing"
     }
