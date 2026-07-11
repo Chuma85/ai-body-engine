@@ -35,8 +35,19 @@ if ($Rest[0] -eq "config" -and $Rest[2] -eq "account") { "chuma@fashionaitechnol
 if ($Rest[0] -eq "config" -and $Rest[2] -eq "project") { if ($env:MOCK_WRONG_PROJECT -eq "1") { "wrong-project" } else { "fashionai-501816" }; exit 0 }
 if ($Rest -contains "describe") {
     $format = $Rest | Where-Object { $_ -like "--format=*" } | Select-Object -First 1
-    $setting = $format -replace '^--format=value\(', '' -replace '\)$', ''
     $bucketMode = $env:MOCK_BUCKET_MODE
+    if ($Rest -contains "--raw") {
+        if ($bucketMode -eq "gcloud_error") { Write-Error "permission denied"; exit 9 }
+        if ($bucketMode -eq "warning") { Write-Error "WARNING: benign update notice" }
+        if ($bucketMode -eq "storage_malformed_json") { '{not-json'; exit 0 }
+        if ($bucketMode -eq "storage_multiple") { '{"storageClass":"STANDARD"}'; '{"storageClass":"STANDARD"}'; exit 0 }
+        if ($bucketMode -eq "storage_missing") { '{}'; exit 0 }
+        if ($bucketMode -eq "storage_empty") { '{"storageClass":""}'; exit 0 }
+        if ($bucketMode -eq "wrong_class") { '{"storageClass":"NEARLINE"}'; exit 0 }
+        if ($bucketMode -eq "normalized") { '{"storageClass":" standard \n"}'; exit 0 }
+        '{"storageClass":"STANDARD"}'; exit 0
+    }
+    $setting = $format -replace '^--format=value\(', '' -replace '\)$', ''
     if ($bucketMode -eq "gcloud_error") { Write-Error "permission denied"; exit 9 }
     if ($bucketMode -eq "warning") { Write-Error "WARNING: benign update notice" }
     if ($bucketMode -eq "missing_public" -and $setting -eq "public_access_prevention") { exit 0 }
@@ -44,7 +55,6 @@ if ($Rest -contains "describe") {
     if ($setting -eq "public_access_prevention") { if ($bucketMode -eq "inherited") { "inherited" } elseif ($bucketMode -eq "normalized") { " EnFoRcEd `n" } else { "enforced" }; exit 0 }
     if ($setting -eq "uniform_bucket_level_access") { if ($bucketMode -eq "uniform_false") { "false" } elseif ($bucketMode -eq "normalized") { " TrUe `n" } else { "true" }; exit 0 }
     if ($setting -eq "location") { if ($bucketMode -eq "wrong_region") { "US" } elseif ($bucketMode -eq "normalized") { "northamerica-northeast2" } else { "NORTHAMERICA-NORTHEAST2" }; exit 0 }
-    if ($setting -eq "storage_class") { if ($bucketMode -eq "wrong_class") { "NEARLINE" } elseif ($bucketMode -eq "normalized") { "standard" } else { "STANDARD" }; exit 0 }
     exit 0
 }
 if ($Rest -contains "cp") { Write-Error "upload must never be invoked"; exit 99 }
@@ -144,6 +154,32 @@ def test_missing_public_access_prevention_is_rejected(tmp_path: Path) -> None:
 def test_malformed_bucket_value_is_rejected(tmp_path: Path) -> None:
     result, _ = run_preflight(tmp_path, bucket_mode="malformed_public")
     assert result.returncode != 0 and "expected exactly one value" in (result.stdout + result.stderr)
+
+
+def test_raw_json_storage_class_standard_is_accepted(tmp_path: Path) -> None:
+    result, calls = run_preflight(tmp_path)
+    assert result.returncode == 0
+    assert any("--raw --format=json" in call for call in calls)
+
+
+def test_storage_class_missing_is_rejected(tmp_path: Path) -> None:
+    result, _ = run_preflight(tmp_path, bucket_mode="storage_missing")
+    assert result.returncode != 0 and "storageClass is missing" in (result.stdout + result.stderr)
+
+
+def test_storage_class_empty_is_rejected(tmp_path: Path) -> None:
+    result, _ = run_preflight(tmp_path, bucket_mode="storage_empty")
+    assert result.returncode != 0 and "storageClass is empty" in (result.stdout + result.stderr)
+
+
+def test_storage_class_malformed_json_is_rejected(tmp_path: Path) -> None:
+    result, _ = run_preflight(tmp_path, bucket_mode="storage_malformed_json")
+    assert result.returncode != 0 and "malformed JSON" in (result.stdout + result.stderr)
+
+
+def test_storage_class_multiple_values_are_rejected(tmp_path: Path) -> None:
+    result, _ = run_preflight(tmp_path, bucket_mode="storage_multiple")
+    assert result.returncode != 0 and "malformed JSON" in (result.stdout + result.stderr)
 
 
 def test_uniform_access_false_is_rejected(tmp_path: Path) -> None:

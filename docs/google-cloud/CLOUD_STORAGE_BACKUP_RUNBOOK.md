@@ -22,7 +22,7 @@ gcloud config get-value project
 
 The live-upload preflight requires exactly one active authenticated account from `gcloud auth list --filter=status:ACTIVE --format=value(account)`. It also requires that identity to match the configured account and requires the configured project to be exactly `fashionai-501816`. A configured account alone is not accepted when it is not actively authenticated.
 
-For each configured target bucket, preflight reads the stable `gcloud storage` value fields `public_access_prevention`, `uniform_bucket_level_access`, `location`, and `storage_class`. It fails closed unless they normalize to `enforced`, `true`, `NORTHAMERICA-NORTHEAST2`, and `STANDARD`; it never changes a bucket setting.
+For each configured target bucket, preflight reads the stable `gcloud storage` value fields `public_access_prevention`, `uniform_bucket_level_access`, and `location`, then reads raw JSON and validates the documented API property `storageClass`. It fails closed unless they normalize to `enforced`, `true`, `NORTHAMERICA-NORTHEAST2`, and `STANDARD`; it never changes a bucket setting.
 
 ## Validate and dry-run
 

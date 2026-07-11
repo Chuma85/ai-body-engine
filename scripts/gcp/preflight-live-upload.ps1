@@ -37,6 +37,33 @@ function Get-BucketSetting {
     return $values[0]
 }
 
+function Get-BucketStorageClass {
+    param([Parameter(Mandatory = $true)][string]$Bucket)
+
+    $result = Invoke-GcloudCommand -Arguments @(
+        "storage", "buckets", "describe", "gs://$Bucket",
+        "--project=$ProjectId", "--raw", "--format=json"
+    )
+    if ($result.ExitCode -ne 0) {
+        throw "Bucket '$Bucket' storage class could not be read (gcloud exit $($result.ExitCode))."
+    }
+    $json = $result.StdOut -join [Environment]::NewLine
+    try { $description = $json | ConvertFrom-Json }
+    catch { throw "Bucket '$Bucket' storage class metadata is malformed JSON." }
+    if ($null -eq $description -or $description -is [array]) {
+        throw "Bucket '$Bucket' storage class metadata is missing or non-singular."
+    }
+    $properties = @($description.PSObject.Properties | Where-Object { $_.Name -ceq "storageClass" })
+    if ($properties.Count -ne 1) {
+        throw "Bucket '$Bucket' storageClass is missing or non-singular."
+    }
+    $value = if ($null -eq $properties[0].Value) { "" } else { $properties[0].Value.ToString().Trim() }
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        throw "Bucket '$Bucket' storageClass is empty or malformed."
+    }
+    return $value
+}
+
 if ($ProjectId -ne $expectedProject) { throw "Project must be $expectedProject." }
 if (-not (Get-Command gcloud -ErrorAction SilentlyContinue)) { throw "gcloud CLI is required." }
 $accountResult = Invoke-GcloudCommand -Arguments @("auth", "list", "--filter=status:ACTIVE", "--format=value(account)")
@@ -69,7 +96,7 @@ foreach ($bucket in $buckets) {
     $location = Get-BucketSetting -Bucket $bucket -Setting "location"
     if ($location -ine "NORTHAMERICA-NORTHEAST2") { throw "Bucket '$bucket' failed location validation: expected 'NORTHAMERICA-NORTHEAST2', found '$location'." }
 
-    $storageClass = Get-BucketSetting -Bucket $bucket -Setting "storage_class"
+    $storageClass = Get-BucketStorageClass -Bucket $bucket
     if ($storageClass -ine "STANDARD") { throw "Bucket '$bucket' failed storage class validation: expected 'STANDARD', found '$storageClass'." }
     Write-Host "PASS bucket: $bucket (public access prevention enforced, uniform access, NORTHAMERICA-NORTHEAST2, STANDARD)"
 }
